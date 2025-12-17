@@ -17,3 +17,15 @@ python -m multiviewer.live --registry example_registry.csv --width 1280 --height
 ```
 
 Registry entries should include `ipAddress`; plain IPs get prefixed with `rtp://`. If you already have full URLs, include the scheme and they will be used as-is. Use `--font /path/to/font.ttf` to select a specific TTF.
+- Pass extra ffmpeg input options with `--ffmpeg-opt key=value` (repeatable), e.g. `--ffmpeg-opt rtpflags=send_bye`.
+
+### GUI note
+The live viewer uses OpenCV’s HighGUI (`cv2.namedWindow`/`imshow`). Install the non-headless package (`opencv-python`) and make sure your environment has GUI backends (GTK/Qt/X11) available; otherwise you’ll see a `cvNamedWindow` “re-run cmake” error. On headless servers, run under Xvfb/VNC or redirect to a machine with a display.
+
+## Channel selection GUI
+Launch a simple Tk-based selector with fuzzy search and only start the chosen channels:
+```bash
+python -m multiviewer.selector --registry example_registry.csv --width 1280 --height 720 --font-size 32
+```
+- Type to filter; select multiple entries; click “Launch Selected.”
+- Behind the scenes it calls `multiviewer.live` with `--channel <name>` for each selection. You can also pass `--channel` flags directly to `multiviewer.live` if you prefer the CLI.

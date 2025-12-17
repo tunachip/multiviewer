@@ -4,11 +4,12 @@ import argparse
 import signal
 import threading
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterable, Optional
 
 import av
 import cv2
 import numpy as np
+import polars as pl
 
 from .layout import assign_grid
 from .registry import load_registry
@@ -66,11 +67,12 @@ def stream_worker(
     lock: threading.Lock,
     stop_event: threading.Event,
     max_failures: int = 3,
+    format_options: Optional[Dict[str, str]] = None,
 ) -> None:
     attempts = 0
     while not stop_event.is_set() and attempts < max_failures:
         try:
-            with av.open(url) as container:
+            with av.open(url, options=format_options or {}) as container:
                 for frame in container.decode(video=0):
                     if stop_event.is_set():
                         break
@@ -90,6 +92,24 @@ def stream_worker(
         slots[name] = fail_img
 
 
+def parse_ffmpeg_options(opt_list: Optional[Iterable[str]]) -> Dict[str, str]:
+    """
+    Parse key=value pairs into a dict for av.open(options=...).
+    """
+    opts: Dict[str, str] = {}
+    if not opt_list:
+        return opts
+    for raw in opt_list:
+        if "=" not in raw:
+            raise ValueError(f"Invalid ffmpeg option '{raw}', expected key=value.")
+        key, val = raw.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError(f"Invalid ffmpeg option '{raw}', missing key.")
+        opts[key] = val
+    return opts
+
+
 def compositor_loop(
     df,
     backdrop_bgr: np.ndarray,
@@ -98,9 +118,17 @@ def compositor_loop(
     stop_event: threading.Event,
     window_name: str = "Multiviewer",
 ) -> None:
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     height, width = backdrop_bgr.shape[:2]
-    cv2.resizeWindow(window_name, width, height)
+    try:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, width, height)
+    except cv2.error as exc:
+        msg = (
+            "OpenCV build does not include GUI support (cvNamedWindow failed). "
+            "Install the non-headless opencv-python package and ensure GUI libs "
+            "like GTK/Qt are available, or run on a machine with a display server."
+        )
+        raise RuntimeError(msg) from exc
 
     while not stop_event.is_set():
         frame = backdrop_bgr.copy()
@@ -132,12 +160,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--font-size", type=int, default=28, help="Font size for labels.")
     parser.add_argument("--font", type=str, default=None, help="Optional TTF font path.")
     parser.add_argument("--max-failures", type=int, default=3, help="Retries per stream before marking failed.")
+    parser.add_argument(
+        "--channel",
+        action="append",
+        dest="channels",
+        default=None,
+        help="Channel name to include (can be specified multiple times). Default: all.",
+    )
+    parser.add_argument(
+        "--ffmpeg-opt",
+        action="append",
+        dest="ffmpeg_opts",
+        default=None,
+        help="Extra ffmpeg input option key=value (e.g. rtpflags=send_bye). Can be repeated.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    df = assign_grid(load_registry(args.registry), args.width, args.height, padding=args.padding)
+    df = load_registry(args.registry)
+    if args.channels:
+        wanted = set(args.channels)
+        df = df.filter(pl.col("channelName").is_in(list(wanted)))
+        if df.is_empty():
+            raise SystemExit("No matching channels found for selection.")
+    df = assign_grid(df, args.width, args.height, padding=args.padding)
+    ffmpeg_opts = parse_ffmpeg_options(args.ffmpeg_opts)
 
     # Build backdrop and shared slots.
     backdrop = create_placeholder_grid_image(
@@ -175,7 +224,7 @@ def main() -> None:
                 lock,
                 stop_event,
             ),
-            kwargs={"max_failures": args.max_failures},
+            kwargs={"max_failures": args.max_failures, "format_options": ffmpeg_opts},
             daemon=True,
         )
         t.start()
