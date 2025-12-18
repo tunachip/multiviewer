@@ -64,6 +64,40 @@ def _failure_frame(w: int, h: int, message: str) -> np.ndarray:
     return frame
 
 
+def _apply_trim(img: np.ndarray, trim_expr: str) -> np.ndarray:
+    """
+    Trim the image based on x:y:w:h. w/h can be percentages (e.g., 50%).
+    Applied after rotation.
+    """
+    if not trim_expr:
+        return img
+    parts = trim_expr.split(":")
+    if len(parts) != 4:
+        return img
+    try:
+        x = int(parts[0])
+        y = int(parts[1])
+        w_raw, h_raw = parts[2], parts[3]
+        img_h, img_w = img.shape[:2]
+
+        def parse_size(val: str, total: int) -> int:
+            val = val.strip()
+            if val.endswith("%"):
+                pct = float(val.strip("%"))
+                return max(1, int(total * (pct / 100.0)))
+            return int(val)
+
+        w = parse_size(w_raw, img_w)
+        h = parse_size(h_raw, img_h)
+        x = max(0, x)
+        y = max(0, y)
+        w = min(w, img_w - x)
+        h = min(h, img_h - y)
+        return img[y : y + h, x : x + w]
+    except Exception:
+        return img
+
+
 def stream_worker(
     name:           str,
     url:            str,
@@ -85,17 +119,12 @@ def stream_worker(
                     if stop_event.is_set():
                         break
                     img = frame.to_ndarray(format="bgr24")
-                    if trim_expr:
-                        # Trim expression like "x:y:w:h"
-                        try:
-                            x, y, w, h = [int(v) for v in trim_expr.split(":")]
-                            img = img[y:y+h, x:x+w]
-                        except Exception:
-                            pass
                     if rotation:
                         k = (rotation // 90) % 4
                         if k:
                             img = np.rot90(img, k=k)
+                    if trim_expr:
+                        img = _apply_trim(img, trim_expr)
                     fitted = _fit_frame(img, target_w, target_h)
                     with lock:
                         slots[name] = fitted
