@@ -5,6 +5,8 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Dict, List
+import shutil
+import time
 
 import polars as pl
 from flask import Flask, jsonify, request, send_file, send_from_directory
@@ -18,6 +20,8 @@ app = Flask(__name__)
 processes: Dict[str, subprocess.Popen] = {}
 sdp_paths: Dict[str, Path] = {}
 hls_paths: Dict[str, Path] = {}
+session_timers: Dict[str, threading.Timer] = {}
+sessions_by_target_ip: Dict[str, str] = {}
 registry_df: pl.DataFrame | None = None
 registry_path: Path | None = None
 registry_lock = threading.Lock()
@@ -28,6 +32,36 @@ def init_registry(path: str) -> None:
     with registry_lock:
         registry_df = load_registry(path)
         registry_path = Path(path)
+
+
+def get_request_ip() -> str:
+    fwd = request.headers.get("X-Forwarded-For", "")
+    return fwd.split(",")[0].strip() if fwd else request.remote_addr or ""
+
+
+def stop_session(session_id: str) -> None:
+    proc = processes.pop(session_id, None)
+    timer = session_timers.pop(session_id, None)
+    if timer:
+        timer.cancel()
+    # Remove target-ip mapping if present
+    for ip, sid in list(sessions_by_target_ip.items()):
+        if sid == session_id:
+            sessions_by_target_ip.pop(ip, None)
+    if proc:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    sdp = sdp_paths.pop(session_id, None)
+    hls_dir = hls_paths.pop(session_id, None)
+    if hls_dir and hls_dir.exists():
+        shutil.rmtree(hls_dir, ignore_errors=True)
+    if sdp and sdp.exists():
+        try:
+            sdp.unlink()
+        except Exception:
+            pass
 
 
 def build_live_command(
@@ -106,9 +140,7 @@ def list_channels():
 @app.route("/api/me")
 def my_ip():
     # Prefer X-Forwarded-For if behind a proxy, otherwise use remote_addr.
-    fwd = request.headers.get("X-Forwarded-For", "")
-    ip = fwd.split(",")[0].strip() if fwd else request.remote_addr
-    return jsonify({"ip": ip})
+    return jsonify({"ip": get_request_ip()})
 
 
 @app.route("/api/start", methods=["POST"])
@@ -125,8 +157,15 @@ def start_stream():
     encoder = data.get("encoder", "mpeg4")
     fps = int(data.get("fps", 30))
     use_hls = bool(data.get("hls", False))
+    duration = int(data.get("duration", 300))  # seconds
 
     session_id = secrets.token_hex(6)
+
+    # Enforce one session per target IP (when provided).
+    if ip:
+        existing = sessions_by_target_ip.get(ip)
+        if existing:
+            stop_session(existing)
 
     if use_hls:
         hls_dir = Path(f"/tmp/hls_{session_id}")
@@ -145,6 +184,11 @@ def start_stream():
         proc = subprocess.Popen(cmd)
         processes[session_id] = proc
         hls_paths[session_id] = hls_dir
+        # schedule timeout
+        t = threading.Timer(duration, stop_session, args=[session_id])
+        t.daemon = True
+        t.start()
+        session_timers[session_id] = t
 
         # Wait briefly for playlist to appear to avoid browser 404 loops.
         playlist = hls_dir / "index.m3u8"
@@ -173,6 +217,11 @@ def start_stream():
         proc = subprocess.Popen(cmd)
         processes[session_id] = proc
         sdp_paths[session_id] = sdp_path
+        sessions_by_target_ip[ip] = session_id
+        t = threading.Timer(duration, stop_session, args=[session_id])
+        t.daemon = True
+        t.start()
+        session_timers[session_id] = t
 
         return jsonify({"session": session_id, "sdp_url": f"/sdp/{session_id}", "cmd": cmd})
 
@@ -233,6 +282,8 @@ INDEX_HTML = """<!doctype html>
     <input id="ip" placeholder="e.g. 192.168.1.50">
     <label>Port</label>
     <input id="port" value="5004">
+    <label>Duration (seconds, default 300)</label>
+    <input id="duration" value="300">
     <label>Channels (Ctrl/Cmd+click to select multiple)</label>
     <select id="channels" class="channels" multiple></select>
     <label><input type="checkbox" id="hls"> Play in browser (HLS)</label>
@@ -269,10 +320,11 @@ INDEX_HTML = """<!doctype html>
     async function start() {
       const ip = document.getElementById('ip').value.trim();
       const port = document.getElementById('port').value.trim() || '5004';
+      const duration = document.getElementById('duration').value.trim() || '300';
       const sel = document.getElementById('channels');
       const channels = Array.from(sel.selectedOptions).map(o => o.value);
       const hls = document.getElementById('hls').checked;
-      const payload = { ip, port, channels, hls };
+      const payload = { ip, port, channels, hls, duration };
       const res = await fetch('/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
       const status = document.getElementById('status');
