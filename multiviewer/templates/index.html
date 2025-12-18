@@ -204,6 +204,7 @@
 			</div>
 			<label>HLS List Size</label>
 			<input id="hlsListSize" value="6">
+			<label><input type="checkbox" id="gpuDecode"> Use GPU decode (NVDEC)</label>
 			<label>Channels (Ctrl/Cmd+click to select multiple)</label>
 			<select id="channels" class="channels" multiple></select>
 			<label>Session layout (CSV rows; blank entries make empty tiles)</label>
@@ -267,12 +268,13 @@
 			const encoder = document.getElementById('encoder').value.trim() || 'libx264';
 			const hlsSegment = document.getElementById('hlsSegment').value.trim() || '1.0';
 			const hlsListSize = document.getElementById('hlsListSize').value.trim() || '6';
+			const gpuDecode = document.getElementById('gpuDecode').checked;
 			const preset = document.getElementById('preset').value;
 			const sel = document.getElementById('channels');
 			const channels = Array.from(sel.selectedOptions).map(o => o.value);
 			const hls = document.getElementById('hls').checked;
 			const sessionLayout = document.getElementById('sessionLayout').value;
-			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize, sessionLayout, preset};
+			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize, sessionLayout, preset, gpuDecode};
 			const res = await fetch('/api/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
 			const data = await res.json();
 			const status = document.getElementById('status');

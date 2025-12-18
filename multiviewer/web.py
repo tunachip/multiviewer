@@ -91,6 +91,7 @@ def build_live_command(
     hls_list_size:    int = 6,
     bitrate_kbps:     int | None = None,
     registry_override: Path | None = None,
+    gpu_decode:       bool = False,
 ) -> List[str]:
     cmd = [
         sys.executable, "-m", "multiviewer.live",
@@ -100,6 +101,8 @@ def build_live_command(
         "--font-size", str(font_size),
         "--no-window",
     ]
+    if gpu_decode:
+        cmd.append("--gpu-decode")
     if ip and port:
         cmd.extend([
             "--rtp-out",    f"{ip}:{port}",
@@ -240,6 +243,7 @@ def start_stream():
     bitrate    = int(bitrate) if bitrate not in ("", None) else 6500
     hls_segment = float(data.get("hlsSegment", 1.0))
     hls_list_size = int(data.get("hlsListSize", 6))
+    gpu_decode = bool(data.get("gpuDecode", False))
 
     session_id = secrets.token_hex(6)
 
@@ -276,6 +280,7 @@ def start_stream():
                 hls_list_size=hls_list_size,
                 bitrate_kbps=bitrate,
                 registry_override=registry_path_to_use,
+                gpu_decode=gpu_decode,
             )
             proc = subprocess.Popen(cmd)
             processes[session_id] = proc
@@ -323,6 +328,7 @@ def start_stream():
                 fps=fps,
                 bitrate_kbps=bitrate,
                 registry_override=registry_path_to_use,
+                gpu_decode=gpu_decode,
             )
 
             proc = subprocess.Popen(cmd)

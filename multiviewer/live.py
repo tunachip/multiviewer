@@ -110,24 +110,35 @@ def stream_worker(
     stop_event:     threading.Event,
     max_failures:   int = 3,
     format_options: Optional[Dict[str, str]] = None,
+    use_gpu_decode: bool = False,
 ) -> None:
     attempts = 0
     while not stop_event.is_set() and attempts < max_failures:
         try:
-            with av.open(url, options=format_options or {}) as container:
-                for frame in container.decode(video=0):
+            if use_gpu_decode:
+                for img in _ffmpeg_gpu_reader(url, target_w, target_h, rotation, trim_expr):
                     if stop_event.is_set():
                         break
-                    img = frame.to_ndarray(format="bgr24")
-                    if rotation:
-                        k = (rotation // 90) % 4
-                        if k:
-                            img = np.rot90(img, k=k)
+                    # trim already applied later if needed
                     if trim_expr:
                         img = _apply_trim(img, trim_expr)
-                    fitted = _fit_frame(img, target_w, target_h)
                     with lock:
-                        slots[name] = fitted
+                        slots[name] = img
+            else:
+                with av.open(url, options=format_options or {}) as container:
+                    for frame in container.decode(video=0):
+                        if stop_event.is_set():
+                            break
+                        img = frame.to_ndarray(format="bgr24")
+                        if rotation:
+                            k = (rotation // 90) % 4
+                            if k:
+                                img = np.rot90(img, k=k)
+                        if trim_expr:
+                            img = _apply_trim(img, trim_expr)
+                        fitted = _fit_frame(img, target_w, target_h)
+                        with lock:
+                            slots[name] = fitted
         except Exception:
             attempts += 1
             continue
@@ -221,6 +232,63 @@ def start_rtp_writer(
         return subprocess.Popen(cmd, stdin=subprocess.PIPE)
     except FileNotFoundError as exc:
         raise RuntimeError("ffmpeg not found on PATH, required for RTP output.") from exc
+
+
+def _ffmpeg_gpu_reader(
+    url: str,
+    target_w: int,
+    target_h: int,
+    rotation: int,
+    trim_expr: str,
+):
+    """
+    Use ffmpeg with CUDA/NVDEC to decode and scale/pad to target size, yielding BGR frames.
+    """
+    scale_filter = f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2"
+    vf_parts = [scale_filter]
+    if rotation:
+        # rotation in multiples of 90; use transpose filters if needed
+        k = (rotation // 90) % 4
+        if k == 1:
+            vf_parts.insert(0, "transpose=1")
+        elif k == 2:
+            vf_parts.insert(0, "transpose=1,transpose=1")
+        elif k == 3:
+            vf_parts.insert(0, "transpose=2")
+    if trim_expr:
+        # apply trim after rotation inside ffmpeg if possible? For now, leave to post-process.
+        pass
+    vf = ",".join(vf_parts)
+    cmd = [
+        "ffmpeg",
+        "-hwaccel",
+        "cuda",
+        "-c:v",
+        "h264_cuvid",
+        "-i",
+        url,
+        "-vf",
+        vf,
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    frame_size = target_w * target_h * 3
+    try:
+        while True:
+            if proc.poll() is not None:
+                break
+            buf = proc.stdout.read(frame_size)
+            if not buf or len(buf) < frame_size:
+                break
+            frame = np.frombuffer(buf, np.uint8).reshape((target_h, target_w, 3))
+            yield frame
+    finally:
+        if proc and proc.poll() is None:
+            proc.terminate()
 
 
 def compositor_loop(
@@ -348,6 +416,8 @@ def parse_args() -> argparse.Namespace:
                         help="Target video bitrate in kbps for HLS output (overrides rtp-bitrate-kbps if set).")
     parser.add_argument( "--no-window", action="store_true",
                         help="Run headless (no local window); useful for servers where only RTP output is needed.")
+    parser.add_argument( "--gpu-decode", action="store_true",
+                        help="Use ffmpeg with CUDA/NVDEC for decoding streams.")
     return parser.parse_args()
 
 
@@ -433,7 +503,8 @@ def main() -> None:
             ),
             kwargs={
                 "max_failures": args.max_failures,
-                "format_options": ffmpeg_opts
+                "format_options": ffmpeg_opts,
+                "use_gpu_decode": args.gpu_decode,
             },
             daemon=True,
         )
