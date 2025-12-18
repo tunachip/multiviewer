@@ -235,7 +235,7 @@ def start_stream():
                 proc.terminate()
             except Exception:
                 pass
-            return jsonify({"error": "Failed to start HLS (playlist not created)"}, ), 500
+            return jsonify({"error": "Failed to start HLS (playlist not created)"}), 500
 
         return jsonify({"session": session_id, "hls_url": f"/hls/{session_id}/index.m3u8", "cmd": cmd})
     else:
