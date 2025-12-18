@@ -13,6 +13,7 @@ import polars as pl
 from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
 
 from .registry import load_registry
+import csv
 
 app = Flask(__name__, template_folder="templates")
 
@@ -88,10 +89,11 @@ def build_live_command(
     hls_segment_time: float = 1.0,
     hls_list_size:    int = 6,
     bitrate_kbps:     int | None = None,
+    registry_override: Path | None = None,
 ) -> List[str]:
     cmd = [
         sys.executable, "-m", "multiviewer.live",
-        "--registry",  str(registry_path),
+        "--registry",  str(registry_override or registry_path),
         "--width",     str(width),
         "--height",    str(height),
         "--font-size", str(font_size),
@@ -120,6 +122,45 @@ def build_live_command(
         for ch in channels:
             cmd.extend(["--channel", ch])
     return cmd
+
+
+def build_session_registry(layout_text: str, base_registry: pl.DataFrame, session_id: str) -> Path:
+    """
+    Create a temporary registry CSV with row/col positions based on a session layout text.
+    layout_text: lines of comma-separated channel names; blanks are empty tiles.
+    """
+    lines = [line.strip() for line in layout_text.strip().splitlines() if line.strip() != ""]
+    entries = []
+    for r, line in enumerate(lines):
+        cols = [c.strip() for c in line.split(",")]
+        for c, name in enumerate(cols):
+            if name == "":
+                entries.append({"channelName": f"EMPTY_{r}_{c}", "direction": "", "ipAddress": "", "row": r, "col": c, "isEmpty": True})
+                continue
+            match = base_registry.filter(pl.col("channelName") == name)
+            if match.is_empty():
+                # Unknown channel, treat as empty tile.
+                entries.append({"channelName": f"EMPTY_{r}_{c}", "direction": "", "ipAddress": "", "row": r, "col": c, "isEmpty": True})
+                continue
+            row = match.to_dicts()[0]
+            row.update({"row": r, "col": c, "isEmpty": False})
+            entries.append(row)
+    if not entries:
+        raise ValueError("Session layout produced no entries.")
+    # Write to temp CSV
+    tmp_path = Path(f"/tmp/session_{session_id}.csv")
+    fieldnames = ["channelName", "direction", "ipAddress", "row", "col", "isEmpty"]
+    # include any extra columns from registry to keep compatibility
+    extra_cols = [c for c in base_registry.columns if c not in fieldnames]
+    fieldnames.extend(extra_cols)
+    with tmp_path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for e in entries:
+            for col in extra_cols:
+                e.setdefault(col, "")
+            writer.writerow(e)
+    return tmp_path
 
 
 @app.route("/")
@@ -177,6 +218,7 @@ def start_stream():
     ip        = data.get("ip")
     port      = int(data.get("port", 5004))
     channels  = data.get("channels") or None
+    session_layout = data.get("sessionLayout")
     width     = int(data.get("width", 1280))
     height    = int(data.get("height", 720))
     font_size = int(data.get("fontSize", 32))
@@ -184,8 +226,8 @@ def start_stream():
     fps        = int(data.get("fps", 30))
     use_hls    = bool(data.get("hls", False))
     duration   = int(data.get("duration", 300))  # seconds
-    bitrate    = data.get("bitrateKbps")
-    bitrate    = int(bitrate) if bitrate not in (None, "",) else None
+    bitrate    = data.get("bitrateKbps", "6500")
+    bitrate    = int(bitrate) if bitrate not in ("", None) else 6500
     hls_segment = float(data.get("hlsSegment", 1.0))
     hls_list_size = int(data.get("hlsListSize", 6))
 
@@ -200,6 +242,11 @@ def start_stream():
     try:
         if use_hls:
             hls_dir = Path(f"/tmp/hls_{session_id}")
+            # If a session layout is provided, build a temporary registry file with positions.
+            registry_path_to_use = registry_path
+            if session_layout:
+                tmp_registry = build_session_registry(session_layout, registry_df, session_id)
+                registry_path_to_use = tmp_registry
             cmd = build_live_command(
                 None,
                 None,
@@ -214,6 +261,7 @@ def start_stream():
                 hls_segment_time=hls_segment,
                 hls_list_size=hls_list_size,
                 bitrate_kbps=bitrate,
+                registry_override=registry_path_to_use,
             )
             proc = subprocess.Popen(cmd)
             processes[session_id] = proc
@@ -245,6 +293,10 @@ def start_stream():
             if not ip:
                 return jsonify({"error": "ip is required"}), 400
             sdp_path = Path(f"/tmp/mosaic_{session_id}.sdp")
+            registry_path_to_use = registry_path
+            if session_layout:
+                tmp_registry = build_session_registry(session_layout, registry_df, session_id)
+                registry_path_to_use = tmp_registry
             cmd = build_live_command(
                 ip,
                 port,
@@ -256,6 +308,7 @@ def start_stream():
                 encoder=encoder,
                 fps=fps,
                 bitrate_kbps=bitrate,
+                registry_override=registry_path_to_use,
             )
 
             proc = subprocess.Popen(cmd)

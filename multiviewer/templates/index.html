@@ -31,6 +31,8 @@
 			padding: 16px;
 			box-sizing: border-box;
 			transition: transform 0.2s ease;
+			display: flex;
+			flex-direction: column;
 		}
 
 		.sidebar.collapsed {
@@ -41,7 +43,7 @@
 			position: fixed;
 			bottom: 12px;
 			left: 12px;
-			z-index: 2;
+			z-index: 3;
 			background: #2d7cf6;
 			color: #fff;
 			border: none;
@@ -73,7 +75,9 @@
 		}
 
 		.channels {
-			height: 200px;
+			flex: 1;
+			min-height: 200px;
+			max-height: calc(100vh - 320px);
 		}
 
 		button.primary {
@@ -185,7 +189,7 @@
 				</div>
 				<div>
 					<label>Bitrate (kbps)</label>
-					<input id="bitrate" placeholder="e.g. 3500">
+          <input id="bitrate" value="6500">
 				</div>
 			</div>
 			<div class="row">
@@ -202,6 +206,8 @@
 			<input id="hlsListSize" value="6">
 			<label>Channels (Ctrl/Cmd+click to select multiple)</label>
 			<select id="channels" class="channels" multiple></select>
+			<label>Session layout (CSV rows; blank entries make empty tiles)</label>
+			<textarea id="sessionLayout" rows="4" placeholder="CHAN1,CHAN2,CHAN3&#10;CHAN4,,CHAN5"></textarea>
 			<label><input type="checkbox" id="hls"> Play in browser (HLS)</label>
 			<button class="primary" onclick="start()">Start Stream</button>
 			<div class="status" id="status"></div>
@@ -253,13 +259,14 @@
 			const duration = document.getElementById('duration').value.trim() || '300';
 			const fps = document.getElementById('fps').value.trim() || '30';
 			const bitrate = document.getElementById('bitrate').value.trim();
-			const encoder = document.getElementById('encoder').value.trim() || 'mpeg4';
+			const encoder = document.getElementById('encoder').value.trim() || 'libx264';
 			const hlsSegment = document.getElementById('hlsSegment').value.trim() || '1.0';
 			const hlsListSize = document.getElementById('hlsListSize').value.trim() || '6';
 			const sel = document.getElementById('channels');
 			const channels = Array.from(sel.selectedOptions).map(o => o.value);
 			const hls = document.getElementById('hls').checked;
-			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize};
+			const sessionLayout = document.getElementById('sessionLayout').value;
+			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize, sessionLayout};
 			const res = await fetch('/api/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
 			const data = await res.json();
 			const status = document.getElementById('status');

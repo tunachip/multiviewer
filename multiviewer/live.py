@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import polars as pl
 
-from .layout import assign_grid
+from .layout import assign_grid, assign_grid_with_positions
 from .registry import load_registry
 from .render import create_placeholder_grid_image
 from .hls import start_hls_writer
@@ -216,6 +216,21 @@ def compositor_loop(
                 x, y = int(row["x"]), int(row["y"])
                 h, w, _ = slot.shape
                 frame[y : y + h, x : x + w] = slot
+                # Overlay channel name on a black bar at the bottom of the cell.
+                label = str(name)
+                if label:
+                    bar_h = max(24, h // 12)
+                    cv2.rectangle(frame, (x, y + h - bar_h), (x + w, y + h), (0, 0, 0), thickness=-1)
+                    cv2.putText(
+                        frame,
+                        label,
+                        (x + 8, y + h - bar_h//3),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
         if rtp_proc and rtp_proc.stdin:
             try:
@@ -295,7 +310,10 @@ def main() -> None:
         df = df.filter(pl.col("channelName").is_in(list(wanted)))
         if df.is_empty():
             raise SystemExit("No matching channels found for selection.")
-    df = assign_grid(df, args.width, args.height, padding=args.padding)
+    if {"row", "col"} <= set(df.columns):
+        df = assign_grid_with_positions(df, args.width, args.height, padding=args.padding)
+    else:
+        df = assign_grid(df, args.width, args.height, padding=args.padding)
     ffmpeg_opts = parse_ffmpeg_options(args.ffmpeg_opts)
 
     # Build backdrop and shared slots.
@@ -348,6 +366,8 @@ def main() -> None:
     threads = []
     for row in df.iter_rows(named=True):
         url = _rtp_url(str(row["ipAddress"]))
+        if row.get("isEmpty") or not str(row["ipAddress"]).strip():
+            continue
         t = threading.Thread(
             target=stream_worker,
             args=(
