@@ -81,3 +81,15 @@ def assign_grid_with_positions(
             (padding + pl.col("row") * (cell_h + padding)).alias("y"),
         )
     )
+
+
+def apply_transforms(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Ensure rotation/trim columns exist; defaults to no-op.
+    """
+    cols = df.columns
+    if "rotation" not in cols:
+        df = df.with_columns(pl.lit(0).alias("rotation"))
+    if "trim" not in cols:
+        df = df.with_columns(pl.lit("").alias("trim"))
+    return df

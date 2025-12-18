@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 import polars as pl
 
-from .layout import assign_grid, assign_grid_with_positions
+from .layout import assign_grid, assign_grid_with_positions, apply_transforms
 from .registry import load_registry
 from .render import create_placeholder_grid_image
 from .hls import start_hls_writer
@@ -69,6 +69,8 @@ def stream_worker(
     url:            str,
     target_w:       int,
     target_h:       int,
+    rotation:       int,
+    trim_expr:      str,
     slots:          Dict[str, np.ndarray],
     lock:           threading.Lock,
     stop_event:     threading.Event,
@@ -83,6 +85,17 @@ def stream_worker(
                     if stop_event.is_set():
                         break
                     img = frame.to_ndarray(format="bgr24")
+                    if trim_expr:
+                        # Trim expression like "x:y:w:h"
+                        try:
+                            x, y, w, h = [int(v) for v in trim_expr.split(":")]
+                            img = img[y:y+h, x:x+w]
+                        except Exception:
+                            pass
+                    if rotation:
+                        k = (rotation // 90) % 4
+                        if k:
+                            img = np.rot90(img, k=k)
                     fitted = _fit_frame(img, target_w, target_h)
                     with lock:
                         slots[name] = fitted
@@ -310,6 +323,7 @@ def main() -> None:
         df = df.filter(pl.col("channelName").is_in(list(wanted)))
         if df.is_empty():
             raise SystemExit("No matching channels found for selection.")
+    df = apply_transforms(df)
     if {"row", "col"} <= set(df.columns):
         df = assign_grid_with_positions(df, args.width, args.height, padding=args.padding)
     else:
@@ -375,6 +389,8 @@ def main() -> None:
                 url,
                 int(row["w"]),
                 int(row["h"]),
+                int(row["rotation"]) if "rotation" in row else 0,
+                str(row["trim"]) if "trim" in row else "",
                 slots,
                 lock,
                 stop_event,

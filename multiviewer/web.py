@@ -8,6 +8,7 @@ from typing import Dict, List
 import shutil
 import time
 import sys
+import glob
 
 import polars as pl
 from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
@@ -163,9 +164,17 @@ def build_session_registry(layout_text: str, base_registry: pl.DataFrame, sessio
     return tmp_path
 
 
+def load_preset_layout(name: str) -> str:
+    path = Path("sessions") / name
+    if not path.exists():
+        raise FileNotFoundError(f"Preset not found: {path}")
+    return path.read_text()
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    presets = [Path(p).name for p in glob.glob("sessions/*.csv")]
+    return render_template("index.html", presets=presets)
 
 
 @app.route("/api/channels")
@@ -219,6 +228,7 @@ def start_stream():
     port      = int(data.get("port", 5004))
     channels  = data.get("channels") or None
     session_layout = data.get("sessionLayout")
+    preset_name    = data.get("preset")
     width     = int(data.get("width", 1280))
     height    = int(data.get("height", 720))
     font_size = int(data.get("fontSize", 32))
@@ -238,6 +248,10 @@ def start_stream():
         existing = sessions_by_target_ip.get(ip)
         if existing:
             stop_session(existing)
+
+    # Override layout if a preset is provided.
+    if preset_name:
+        session_layout = load_preset_layout(preset_name)
 
     try:
         if use_hls:

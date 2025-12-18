@@ -209,6 +209,11 @@
 			<label>Session layout (CSV rows; blank entries make empty tiles)</label>
 			<textarea id="sessionLayout" rows="4" placeholder="CHAN1,CHAN2,CHAN3&#10;CHAN4,,CHAN5"></textarea>
 			<label><input type="checkbox" id="hls"> Play in browser (HLS)</label>
+			<label>Preset (from sessions/*.csv)</label>
+			<select id="preset">
+				<option value="">None</option>
+				{% for p in presets %}<option value="{{p}}">{{p}}</option>{% endfor %}
+			</select>
 			<button class="primary" onclick="start()">Start Stream</button>
 			<div class="status" id="status"></div>
 			<div class="sessions">
@@ -262,11 +267,12 @@
 			const encoder = document.getElementById('encoder').value.trim() || 'libx264';
 			const hlsSegment = document.getElementById('hlsSegment').value.trim() || '1.0';
 			const hlsListSize = document.getElementById('hlsListSize').value.trim() || '6';
+			const preset = document.getElementById('preset').value;
 			const sel = document.getElementById('channels');
 			const channels = Array.from(sel.selectedOptions).map(o => o.value);
 			const hls = document.getElementById('hls').checked;
 			const sessionLayout = document.getElementById('sessionLayout').value;
-			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize, sessionLayout};
+			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize, sessionLayout, preset};
 			const res = await fetch('/api/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
 			const data = await res.json();
 			const status = document.getElementById('status');
