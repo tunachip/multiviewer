@@ -130,7 +130,9 @@ def start_rtp_writer(
     width: int,
     height: int,
     fps: int,
+    encoder: str = "libx264",
     extra_args: Optional[Iterable[str]] = None,
+    sdp_file: Optional[str] = None,
 ) -> subprocess.Popen:
     """
     Launch an ffmpeg process that consumes raw BGR frames on stdin and
@@ -152,7 +154,7 @@ def start_rtp_writer(
         "-",
         "-an",
         "-c:v",
-        "libx264",
+        encoder,
         "-preset",
         "veryfast",
         "-tune",
@@ -160,6 +162,8 @@ def start_rtp_writer(
         "-pix_fmt",
         "yuv420p",
     ]
+    if sdp_file:
+        cmd.extend(["-sdp_file", sdp_file])
     if extra_args:
         cmd.extend(extra_args)
     cmd.extend(
@@ -211,6 +215,7 @@ def compositor_loop(
         if rtp_proc and rtp_proc.stdin:
             try:
                 rtp_proc.stdin.write(frame.tobytes())
+                rtp_proc.stdin.flush()
             except BrokenPipeError:
                 stop_event.set()
             except Exception:
@@ -268,6 +273,18 @@ def parse_args() -> argparse.Namespace:
         help="Extra ffmpeg args for RTP output (passed verbatim), repeatable. "
         "Quote groups to keep pairs together, e.g. --rtp-ffmpeg-arg \"-sdp_file mosaic.sdp\"",
     )
+    parser.add_argument(
+        "--rtp-encoder",
+        type=str,
+        default="libx264",
+        help="Video encoder for RTP output (default: libx264).",
+    )
+    parser.add_argument(
+        "--rtp-sdp-file",
+        type=str,
+        default=None,
+        help="Write an SDP file for the RTP output (e.g., mosaic.sdp).",
+    )
     return parser.parse_args()
 
 
@@ -300,7 +317,13 @@ def main() -> None:
     rtp_ffmpeg_args = parse_ffmpeg_arg_list(args.rtp_ffmpeg_args)
     if args.rtp_out:
         rtp_proc = start_rtp_writer(
-            args.rtp_out, args.width, args.height, args.rtp_fps, extra_args=rtp_ffmpeg_args
+            args.rtp_out,
+            args.width,
+            args.height,
+            args.rtp_fps,
+            encoder=args.rtp_encoder,
+            extra_args=rtp_ffmpeg_args,
+            sdp_file=args.rtp_sdp_file,
         )
 
     # Handle Ctrl+C cleanly.

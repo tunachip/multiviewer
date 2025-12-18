@@ -26,6 +26,7 @@ Registry entries should include `ipAddress`; plain IPs get prefixed with `rtp://
   ```bash
   --rtp-ffmpeg-arg "-sdp_file mosaic.sdp" --rtp-ffmpeg-arg "-loglevel info"
   ```
+  If your ffmpeg build lacks `libx264`, pick another encoder with `--rtp-encoder mpeg4` (or `h264_nvenc` if available).
 
 ### GUI note
 The live viewer uses OpenCV’s HighGUI (`cv2.namedWindow`/`imshow`). Install the non-headless package (`opencv-python`) and make sure your environment has GUI backends (GTK/Qt/X11) available; otherwise you’ll see a `cvNamedWindow` “re-run cmake” error. On headless servers, run under Xvfb/VNC or redirect to a machine with a display.
