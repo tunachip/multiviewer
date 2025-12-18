@@ -258,11 +258,18 @@ def compositor_loop(
                 x, y = int(row["x"]), int(row["y"])
                 h, w, _ = slot.shape
                 frame[y : y + h, x : x + w] = slot
-                # Overlay channel name on a black bar at the bottom of the cell.
+                # Overlay channel name on a semi-transparent black bar at the bottom of the cell.
                 label = str(name)
                 if label:
                     bar_h = max(24, h // 12)
-                    cv2.rectangle(frame, (x, y + h - bar_h), (x + w, y + h), (0, 0, 0), thickness=-1)
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (x, y + h - bar_h), (x + w, y + h), (0, 0, 0), thickness=-1)
+                    alpha = 0.5
+                    frame[y : y + h, x : x + w] = cv2.addWeighted(
+                        overlay[y : y + h, x : x + w], alpha,
+                        frame[y : y + h, x : x + w], 1 - alpha,
+                        0
+                    )
                     cv2.putText(
                         frame,
                         label,
