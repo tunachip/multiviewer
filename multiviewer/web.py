@@ -136,21 +136,21 @@ def build_session_registry(layout_text: str, base_registry: pl.DataFrame, sessio
         cols = [c.strip() for c in line.split(",")]
         for c, name in enumerate(cols):
             if name == "":
-                entries.append({"channelName": f"EMPTY_{r}_{c}", "direction": "", "ipAddress": "", "row": r, "col": c, "isEmpty": True})
+                entries.append({"channelName": f"EMPTY_{r}_{c}", "direction": "", "ipAddress": "", "row": r, "col": c, "isEmpty": True, "rotation": 0, "trim": ""})
                 continue
             match = base_registry.filter(pl.col("channelName") == name)
             if match.is_empty():
                 # Unknown channel, treat as empty tile.
-                entries.append({"channelName": f"EMPTY_{r}_{c}", "direction": "", "ipAddress": "", "row": r, "col": c, "isEmpty": True})
+                entries.append({"channelName": f"EMPTY_{r}_{c}", "direction": "", "ipAddress": "", "row": r, "col": c, "isEmpty": True, "rotation": 0, "trim": ""})
                 continue
             row = match.to_dicts()[0]
-            row.update({"row": r, "col": c, "isEmpty": False})
+            row.update({"row": r, "col": c, "isEmpty": False, "rotation": row.get("rotation", 0) or 0, "trim": row.get("trim", "") or ""})
             entries.append(row)
     if not entries:
         raise ValueError("Session layout produced no entries.")
     # Write to temp CSV
     tmp_path = Path(f"/tmp/session_{session_id}.csv")
-    fieldnames = ["channelName", "direction", "ipAddress", "row", "col", "isEmpty"]
+    fieldnames = ["channelName", "direction", "ipAddress", "row", "col", "isEmpty", "rotation", "trim"]
     # include any extra columns from registry to keep compatibility
     extra_cols = [c for c in base_registry.columns if c not in fieldnames]
     fieldnames.extend(extra_cols)

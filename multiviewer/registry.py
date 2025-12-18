@@ -22,23 +22,29 @@ def load_registry(csv_path: str | Path) -> pl.DataFrame:
         raise ValueError(f"Registry is missing required columns: {sorted(missing)}")
 
     # Normalize column order and types to keep downstream code predictable.
-    df = df.with_columns(
-        [
-            pl.when(pl.col("rotation").is_null()).then(0).otherwise(pl.col("rotation")).alias("rotation")
-            if "rotation" in df.columns
-            else pl.lit(0).alias("rotation"),
-            pl.when(pl.col("trim").is_null()).then("").otherwise(pl.col("trim")).alias("trim")
-            if "trim" in df.columns
-            else pl.lit("").alias("trim"),
-        ]
-    )
+    # Normalize rotation/trim if present; otherwise add defaults.
+    if "rotation" in df.columns:
+        df = df.with_columns(
+            pl.col("rotation")
+            .cast(pl.Float64, strict=False)
+            .fill_null(0)
+            .fill_nan(0)
+            .alias("rotation")
+        )
+    else:
+        df = df.with_columns(pl.lit(0).alias("rotation"))
+
+    if "trim" in df.columns:
+        df = df.with_columns(pl.col("trim").fill_null("").alias("trim"))
+    else:
+        df = df.with_columns(pl.lit("").alias("trim"))
 
     return df.select(
         [
             pl.col("channelName").cast(pl.Utf8),
             pl.col("direction").cast(pl.Utf8),
             pl.col("ipAddress").cast(pl.Utf8),
-            pl.col("rotation").cast(pl.Int64),
+            pl.col("rotation").cast(pl.Int64, strict=False).fill_null(0),
             pl.col("trim").cast(pl.Utf8),
             pl.all().exclude(list(REQUIRED_COLUMNS | {"rotation", "trim"})),
         ]
