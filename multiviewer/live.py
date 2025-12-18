@@ -15,6 +15,7 @@ import polars as pl
 from .layout import assign_grid
 from .registry import load_registry
 from .render import create_placeholder_grid_image
+from .hls import start_hls_writer
 
 
 def _rtp_url(ip_address: str) -> str:
@@ -187,6 +188,7 @@ def compositor_loop(
     stop_event: threading.Event,
     window_name: str = "Multiviewer",
     rtp_proc: Optional[subprocess.Popen] = None,
+    hls_proc: Optional[subprocess.Popen] = None,
     show_window: bool = True,
 ) -> None:
     height, width = backdrop_bgr.shape[:2]
@@ -218,6 +220,14 @@ def compositor_loop(
             try:
                 rtp_proc.stdin.write(frame.tobytes())
                 rtp_proc.stdin.flush()
+            except BrokenPipeError:
+                stop_event.set()
+            except Exception:
+                stop_event.set()
+        if hls_proc and hls_proc.stdin:
+            try:
+                hls_proc.stdin.write(frame.tobytes())
+                hls_proc.stdin.flush()
             except BrokenPipeError:
                 stop_event.set()
             except Exception:
@@ -293,6 +303,24 @@ def parse_args() -> argparse.Namespace:
         help="Write an SDP file for the RTP output (e.g., mosaic.sdp).",
     )
     parser.add_argument(
+        "--hls-dir",
+        type=str,
+        default=None,
+        help="Directory to write HLS output (index.m3u8, segments). If set, HLS is produced.",
+    )
+    parser.add_argument(
+        "--hls-segment-time",
+        type=float,
+        default=1.0,
+        help="HLS segment duration in seconds (default: 1.0).",
+    )
+    parser.add_argument(
+        "--hls-list-size",
+        type=int,
+        default=6,
+        help="Number of segments to keep in the HLS playlist (default: 6).",
+    )
+    parser.add_argument(
         "--no-window",
         action="store_true",
         help="Run headless (no local window); useful for servers where only RTP output is needed.",
@@ -326,6 +354,7 @@ def main() -> None:
     lock = threading.Lock()
     stop_event = threading.Event()
     rtp_proc: Optional[subprocess.Popen] = None
+    hls_proc: Optional[subprocess.Popen] = None
     rtp_ffmpeg_args = parse_ffmpeg_arg_list(args.rtp_ffmpeg_args)
     if args.rtp_out:
         rtp_proc = start_rtp_writer(
@@ -336,6 +365,16 @@ def main() -> None:
             encoder=args.rtp_encoder,
             extra_args=rtp_ffmpeg_args,
             sdp_file=args.rtp_sdp_file,
+        )
+    if args.hls_dir:
+        hls_proc = start_hls_writer(
+            Path(args.hls_dir),
+            args.width,
+            args.height,
+            args.rtp_fps,
+            segment_time=args.hls_segment_time,
+            list_size=args.hls_list_size,
+            encoder=args.rtp_encoder,
         )
 
     # Handle Ctrl+C cleanly.
@@ -372,6 +411,7 @@ def main() -> None:
         lock,
         stop_event,
         rtp_proc=rtp_proc,
+        hls_proc=hls_proc,
         show_window=not args.no_window,
     )
     stop_event.set()
@@ -385,6 +425,16 @@ def main() -> None:
                 pass
         try:
             rtp_proc.terminate()
+        except Exception:
+            pass
+    if hls_proc:
+        if hls_proc.stdin:
+            try:
+                hls_proc.stdin.close()
+            except Exception:
+                pass
+        try:
+            hls_proc.terminate()
         except Exception:
             pass
 
