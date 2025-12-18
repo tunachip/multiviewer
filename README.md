@@ -58,3 +58,4 @@ A lightweight web UI serves channel selection and starts an RTP stream, exposing
 python -m multiviewer.web --host 0.0.0.0 --port 8080 --registry example_registry.csv
 ```
 Then browse to `http://<server_ip>:8080`, enter your receiving IP/port, select channels, click “Start Stream,” and download the SDP link to open in VLC. The server runs `multiviewer.live` headless for that request.
+The UI also offers an “Open in VLC” link using the `vlc://` protocol; browsers may prompt/ask for permission.

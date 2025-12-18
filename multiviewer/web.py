@@ -190,8 +190,10 @@ INDEX_HTML = """<!doctype html>
         status.style.color = '#f66';
         return;
       }
-      const sdpUrl = data.sdp_url;
-      status.innerHTML = 'Started. Download SDP: <a href="'+sdpUrl+'" style="color:#6cf">mosaic.sdp</a>';
+      const sdpUrl = new URL(data.sdp_url, window.location.origin).href;
+      const vlcUrl = 'vlc://' + sdpUrl;
+      status.innerHTML = 'Started. <a href="'+sdpUrl+'" style="color:#6cf">Download SDP</a> or '
+        + '<a href="'+vlcUrl+'" style="color:#9cf">Open in VLC</a> (may prompt)';
       status.style.color = '#6cf';
     }
     loadChannels();
