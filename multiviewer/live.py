@@ -187,18 +187,20 @@ def compositor_loop(
     stop_event: threading.Event,
     window_name: str = "Multiviewer",
     rtp_proc: Optional[subprocess.Popen] = None,
+    show_window: bool = True,
 ) -> None:
     height, width = backdrop_bgr.shape[:2]
-    try:
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(window_name, width, height)
-    except cv2.error as exc:
-        msg = (
-            "OpenCV build does not include GUI support (cvNamedWindow failed). "
-            "Install the non-headless opencv-python package and ensure GUI libs "
-            "like GTK/Qt are available, or run on a machine with a display server."
-        )
-        raise RuntimeError(msg) from exc
+    if show_window:
+        try:
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(window_name, width, height)
+        except cv2.error as exc:
+            msg = (
+                "OpenCV build does not include GUI support (cvNamedWindow failed). "
+                "Install the non-headless opencv-python package and ensure GUI libs "
+                "like GTK/Qt are available, or run with --no-window."
+            )
+            raise RuntimeError(msg) from exc
 
     while not stop_event.is_set():
         frame = backdrop_bgr.copy()
@@ -221,13 +223,18 @@ def compositor_loop(
             except Exception:
                 stop_event.set()
 
-        cv2.imshow(window_name, frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key in (ord("q"), 27):
-            stop_event.set()
-            break
+        if show_window:
+            cv2.imshow(window_name, frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord("q"), 27):
+                stop_event.set()
+                break
+        else:
+            # Headless mode: small sleep to avoid busy loop.
+            cv2.waitKey(1)
 
-    cv2.destroyAllWindows()
+    if show_window:
+        cv2.destroyAllWindows()
 
 
 def parse_args() -> argparse.Namespace:
@@ -284,6 +291,11 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Write an SDP file for the RTP output (e.g., mosaic.sdp).",
+    )
+    parser.add_argument(
+        "--no-window",
+        action="store_true",
+        help="Run headless (no local window); useful for servers where only RTP output is needed.",
     )
     return parser.parse_args()
 
@@ -353,7 +365,15 @@ def main() -> None:
         t.start()
         threads.append(t)
 
-    compositor_loop(df, backdrop_bgr, slots, lock, stop_event, rtp_proc=rtp_proc)
+    compositor_loop(
+        df,
+        backdrop_bgr,
+        slots,
+        lock,
+        stop_event,
+        rtp_proc=rtp_proc,
+        show_window=not args.no_window,
+    )
     stop_event.set()
     for t in threads:
         t.join(timeout=1.0)

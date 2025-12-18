@@ -30,6 +30,7 @@ Registry entries should include `ipAddress`; plain IPs get prefixed with `rtp://
 
 ### GUI note
 The live viewer uses OpenCV’s HighGUI (`cv2.namedWindow`/`imshow`). Install the non-headless package (`opencv-python`) and make sure your environment has GUI backends (GTK/Qt/X11) available; otherwise you’ll see a `cvNamedWindow` “re-run cmake” error. On headless servers, run under Xvfb/VNC or redirect to a machine with a display.
+If you only need RTP output, run with `--no-window` to skip GUI entirely.
 
 ## Channel selection GUI
 Launch a simple Tk-based selector with fuzzy search and only start the chosen channels:
