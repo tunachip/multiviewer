@@ -3,3 +3,4 @@ Pillow>=10.0.0
 av>=11.0.0
 opencv-python>=4.8.0.76
 numpy>=1.25.0
+Flask>=3.0.0

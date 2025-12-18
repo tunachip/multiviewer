@@ -39,3 +39,22 @@ python -m multiviewer.selector --registry example_registry.csv --width 1280 --he
 ```
 - Type to filter; select multiple entries; click “Launch Selected.”
 - Behind the scenes it calls `multiviewer.live` with `--channel <name>` for each selection. You can also pass `--channel` flags directly to `multiviewer.live` if you prefer the CLI.
+
+## Remote RTP to a Windows client
+Use `scripts/launch_rtp.sh` on the server to stream to a Windows client, then copy the SDP over and open it in VLC:
+```bash
+# on the server
+./scripts/launch_rtp.sh <windows_ip> <registry_csv> 5004
+
+# from Windows (PowerShell) to fetch SDP, assuming OpenSSH client is installed:
+scp user@<server_ip>:/tmp/mosaic_<windows_ip_with_underscores>_5004.sdp $HOME\\Downloads\\mosaic.sdp
+# open the downloaded mosaic.sdp in VLC (Media -> Open File)
+```
+If the Windows box runs the sender command via SSH, ensure SSH keys/creds are set up; adjust paths as needed.
+
+## Web launcher (enter IP, pick channels)
+A lightweight web UI serves channel selection and starts an RTP stream, exposing the SDP for download:
+```bash
+python -m multiviewer.web --host 0.0.0.0 --port 8080 --registry example_registry.csv
+```
+Then browse to `http://<server_ip>:8080`, enter your receiving IP/port, select channels, click “Start Stream,” and download the SDP link to open in VLC. The server runs `multiviewer.live` headless for that request.
