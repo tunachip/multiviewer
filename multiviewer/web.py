@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List
 import shutil
 import time
+import sys
 
 import polars as pl
 from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
@@ -65,6 +66,14 @@ def stop_session(session_id: str) -> None:
     meta = session_meta.pop(session_id, None)
 
 
+@app.errorhandler(Exception)
+def handle_error(exc):
+    # Return JSON errors for API routes; otherwise fall back to default handling.
+    if request.path.startswith("/api/"):
+        return jsonify({"error": str(exc)}), 500
+    raise exc
+
+
 def build_live_command(
     ip:               str | None,
     port:             int | None,
@@ -81,7 +90,7 @@ def build_live_command(
     bitrate_kbps:     int | None = None,
 ) -> List[str]:
     cmd = [
-        "python", "-m", "multiviewer.live",
+        sys.executable, "-m", "multiviewer.live",
         "--registry",  str(registry_path),
         "--width",     str(width),
         "--height",    str(height),
@@ -188,91 +197,88 @@ def start_stream():
         if existing:
             stop_session(existing)
 
-    if use_hls:
-        hls_dir = Path(f"/tmp/hls_{session_id}")
-        cmd = build_live_command(
-            None,
-            None,
-            channels,
-            None,
-            width=width,
-            height=height,
-            font_size=font_size,
-            encoder=encoder,
-            fps=fps,
-            hls_dir=hls_dir,
-            hls_segment_time=hls_segment,
-            hls_list_size=hls_list_size,
-            bitrate_kbps=bitrate,
-        )
-        proc = subprocess.Popen(cmd)
-        processes[session_id] = proc
-        hls_paths[session_id] = hls_dir
-        session_meta[session_id] = {
-            "mode": "hls",
-            "ip": None,
-            "port": None,
-            "channels": channels,
-            "started_at": time.time(),
-            "duration": duration,
-        }
-        # schedule timeout
-        t = threading.Timer(duration, stop_session, args=[session_id])
-        t.daemon = True
-        t.start()
-        session_timers[session_id] = t
+    try:
+        if use_hls:
+            hls_dir = Path(f"/tmp/hls_{session_id}")
+            cmd = build_live_command(
+                None,
+                None,
+                channels,
+                None,
+                width=width,
+                height=height,
+                font_size=font_size,
+                encoder=encoder,
+                fps=fps,
+                hls_dir=hls_dir,
+                hls_segment_time=hls_segment,
+                hls_list_size=hls_list_size,
+                bitrate_kbps=bitrate,
+            )
+            proc = subprocess.Popen(cmd)
+            processes[session_id] = proc
+            hls_paths[session_id] = hls_dir
+            session_meta[session_id] = {
+                "mode": "hls",
+                "ip": None,
+                "port": None,
+                "channels": channels,
+                "started_at": time.time(),
+                "duration": duration,
+            }
+            t = threading.Timer(duration, stop_session, args=[session_id])
+            t.daemon = True
+            t.start()
+            session_timers[session_id] = t
 
-        # Wait briefly for playlist to appear to avoid browser 404 loops.
-        playlist = hls_dir / "index.m3u8"
-        for _ in range(50):  # ~5s max
-            if playlist.exists():
-                break
-            import time
+            playlist = hls_dir / "index.m3u8"
+            for _ in range(50):  # ~5s max
+                if playlist.exists():
+                    break
+                time.sleep(0.1)
+            if not playlist.exists():
+                stop_session(session_id)
+                return jsonify({"error": "Failed to start HLS (playlist not created)"}), 500
 
-            time.sleep(0.1)
-        if not playlist.exists():
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-            return jsonify({"error": "Failed to start HLS (playlist not created)"}), 500
+            return jsonify({"session": session_id, "hls_url": f"/hls/{session_id}/index.m3u8", "cmd": cmd})
+        else:
+            if not ip:
+                return jsonify({"error": "ip is required"}), 400
+            sdp_path = Path(f"/tmp/mosaic_{session_id}.sdp")
+            cmd = build_live_command(
+                ip,
+                port,
+                channels,
+                sdp_path,
+                width=width,
+                height=height,
+                font_size=font_size,
+                encoder=encoder,
+                fps=fps,
+                bitrate_kbps=bitrate,
+            )
 
-        return jsonify({"session": session_id, "hls_url": f"/hls/{session_id}/index.m3u8", "cmd": cmd})
-    else:
-        if not ip:
-            return jsonify({"error": "ip is required"}), 400
-        sdp_path = Path(f"/tmp/mosaic_{session_id}.sdp")
-        cmd = build_live_command(
-            ip,
-            port,
-            channels,
-            sdp_path,
-            width=width,
-            height=height,
-            font_size=font_size,
-            encoder=encoder,
-            fps=fps,
-            bitrate_kbps=bitrate,
-        )
+            proc = subprocess.Popen(cmd)
+            processes[session_id] = proc
+            sdp_paths[session_id] = sdp_path
+            sessions_by_target_ip[ip] = session_id
+            session_meta[session_id] = {
+                "mode": "rtp",
+                "ip": ip,
+                "port": port,
+                "channels": channels,
+                "started_at": time.time(),
+                "duration": duration,
+            }
+            t = threading.Timer(duration, stop_session, args=[session_id])
+            t.daemon = True
+            t.start()
+            session_timers[session_id] = t
 
-        proc = subprocess.Popen(cmd)
-        processes[session_id] = proc
-        sdp_paths[session_id] = sdp_path
-        sessions_by_target_ip[ip] = session_id
-        session_meta[session_id] = {
-            "mode": "rtp",
-            "ip": ip,
-            "port": port,
-            "channels": channels,
-            "started_at": time.time(),
-            "duration": duration,
-        }
-        t = threading.Timer(duration, stop_session, args=[session_id])
-        t.daemon = True
-        t.start()
-        session_timers[session_id] = t
-
-        return jsonify({"session": session_id, "sdp_url": f"/sdp/{session_id}", "cmd": cmd})
+            return jsonify({"session": session_id, "sdp_url": f"/sdp/{session_id}", "cmd": cmd})
+    except Exception as exc:
+        stop_session(session_id)
+        return jsonify({"error": f"Failed to start: {exc}"}), 500
 
 
 @app.route("/sdp/<session_id>")
