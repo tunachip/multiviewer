@@ -264,7 +264,7 @@ def compositor_loop(
                     bar_h = max(24, h // 12)
                     overlay = frame.copy()
                     cv2.rectangle(overlay, (x, y + h - bar_h), (x + w, y + h), (0, 0, 0), thickness=-1)
-                    alpha = 0.5
+                    alpha = 0.8
                     frame[y : y + h, x : x + w] = cv2.addWeighted(
                         overlay[y : y + h, x : x + w], alpha,
                         frame[y : y + h, x : x + w], 1 - alpha,
