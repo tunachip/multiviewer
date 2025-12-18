@@ -264,35 +264,54 @@ INDEX_HTML = """<!doctype html>
   <meta charset="utf-8">
   <title>Multiviewer RTP Launcher</title>
   <style>
-    body { font-family: sans-serif; margin: 20px; background: #111; color: #eee; }
-    .panel { background: #1b1b1b; padding: 16px; border-radius: 8px; max-width: 640px; }
-    label { display: block; margin-top: 10px; }
-    input, select { width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #333; background: #222; color: #eee; }
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: sans-serif; background: #0f0f10; color: #f1f1f1; }
+    .layout { display: flex; min-height: 100vh; }
+    .sidebar { width: 320px; max-width: 90vw; background: #16161a; border-right: 1px solid #23232a; padding: 16px; box-sizing: border-box; transition: transform 0.2s ease; }
+    .sidebar.collapsed { transform: translateX(-100%); }
+    .toggle { position: absolute; top: 12px; left: 12px; z-index: 2; background: #2d7cf6; color: #fff; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; }
+    h2 { margin-top: 0; }
+    label { display: block; margin-top: 10px; font-size: 14px; color: #cfd1d5; }
+    input, select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #2b2c33; background: #1f1f26; color: #f1f1f1; box-sizing: border-box; }
     .channels { height: 200px; }
-    button { margin-top: 16px; padding: 10px 16px; border: none; border-radius: 4px; background: #2d7cf6; color: #fff; cursor: pointer; }
-    button:hover { background: #1f65c9; }
-    .status { margin-top: 12px; }
-    video { width: 100%; max-width: 640px; margin-top: 12px; background: #000; }
+    button.primary { margin-top: 16px; width: 100%; padding: 12px 16px; border: none; border-radius: 6px; background: #2d7cf6; color: #fff; cursor: pointer; font-size: 15px; }
+    button.primary:hover { background: #1f65c9; }
+    .status { margin-top: 12px; min-height: 22px; }
+    .content { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+    .player-wrap { width: 100%; max-width: 100%; }
+    video { width: 100%; height: auto; max-height: 90vh; background: #000; border: 1px solid #23232a; border-radius: 8px; }
   </style>
 </head>
 <body>
-  <div class="panel">
-    <h2>Start RTP Stream</h2>
-    <label>Your IP address (receiver)</label>
-    <input id="ip" placeholder="e.g. 192.168.1.50">
-    <label>Port</label>
-    <input id="port" value="5004">
-    <label>Duration (seconds, default 300)</label>
-    <input id="duration" value="300">
-    <label>Channels (Ctrl/Cmd+click to select multiple)</label>
-    <select id="channels" class="channels" multiple></select>
-    <label><input type="checkbox" id="hls"> Play in browser (HLS)</label>
-    <button onclick="start()">Start Stream</button>
-    <div class="status" id="status"></div>
-    <video id="player" controls style="display:none"></video>
+  <button class="toggle" onclick="toggleSidebar()">Settings</button>
+  <div class="layout">
+    <div id="sidebar" class="sidebar">
+      <h2>Start Stream</h2>
+      <label>Your IP address (receiver)</label>
+      <input id="ip" placeholder="e.g. 192.168.1.50">
+      <label>Port</label>
+      <input id="port" value="5004">
+      <label>Duration (seconds, default 300)</label>
+      <input id="duration" value="300">
+      <label>Channels (Ctrl/Cmd+click to select multiple)</label>
+      <select id="channels" class="channels" multiple></select>
+      <label><input type="checkbox" id="hls"> Play in browser (HLS)</label>
+      <button class="primary" onclick="start()">Start Stream</button>
+      <div class="status" id="status"></div>
+    </div>
+    <div class="content">
+      <div class="player-wrap">
+        <video id="player" controls style="display:none"></video>
+      </div>
+    </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <script>
+    let hlsPlayer = null;
+    function toggleSidebar() {
+      const sb = document.getElementById('sidebar');
+      sb.classList.toggle('collapsed');
+    }
     async function loadChannels() {
       const res = await fetch('/api/channels');
       const data = await res.json();
@@ -330,6 +349,10 @@ INDEX_HTML = """<!doctype html>
       const status = document.getElementById('status');
       const player = document.getElementById('player');
       player.style.display = 'none';
+      if (hlsPlayer) {
+        hlsPlayer.destroy();
+        hlsPlayer = null;
+      }
       if (!res.ok) {
         status.textContent = data.error || 'Failed to start.';
         status.style.color = '#f66';
@@ -340,7 +363,7 @@ INDEX_HTML = """<!doctype html>
         status.innerHTML = 'Started HLS. <a href="'+hlsUrl+'" style="color:#6cf">Open playlist</a>';
         status.style.color = '#6cf';
         if (Hls.isSupported()) {
-          const hlsPlayer = new Hls();
+          hlsPlayer = new Hls({ liveDurationInfinity: true });
           hlsPlayer.loadSource(hlsUrl);
           hlsPlayer.attachMedia(player);
           player.style.display = 'block';
