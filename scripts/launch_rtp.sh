@@ -16,7 +16,7 @@ WIDTH="${WIDTH:-1280}"
 HEIGHT="${HEIGHT:-720}"
 FONT_SIZE="${FONT_SIZE:-32}"
 FPS="${FPS:-30}"
-ENCODER="${ENCODER:-mpeg4}"  # choose mpeg4 for broad compatibility
+ENCODER="${ENCODER:-mpeg4}" # choose mpeg4 for broad compatibility
 SDP_FILE="/tmp/mosaic_${CLIENT_IP//./_}_${PORT}.sdp"
 
 python -m multiviewer.live \

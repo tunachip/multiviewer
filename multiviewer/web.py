@@ -73,7 +73,7 @@ def build_live_command(
     width:            int = 1280,
     height:           int = 720,
     font_size:        int = 32,
-    encoder:          str = "mpeg4",
+    encoder:          str = "libx264",
     fps:              int = 30,
     hls_dir:          Path | None = None,
     hls_segment_time: float = 1.0,
@@ -171,7 +171,7 @@ def start_stream():
     width     = int(data.get("width", 1280))
     height    = int(data.get("height", 720))
     font_size = int(data.get("fontSize", 32))
-    encoder    = data.get("encoder", "mpeg4")
+    encoder    = data.get("encoder", "libx264")
     fps        = int(data.get("fps", 30))
     use_hls    = bool(data.get("hls", False))
     duration   = int(data.get("duration", 300))  # seconds
