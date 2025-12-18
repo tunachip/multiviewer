@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import signal
+import subprocess
 import threading
 from pathlib import Path
 from typing import Dict, Iterable, Optional
@@ -110,6 +111,56 @@ def parse_ffmpeg_options(opt_list: Optional[Iterable[str]]) -> Dict[str, str]:
     return opts
 
 
+def start_rtp_writer(
+    out_target: str,
+    width: int,
+    height: int,
+    fps: int,
+    extra_args: Optional[Iterable[str]] = None,
+) -> subprocess.Popen:
+    """
+    Launch an ffmpeg process that consumes raw BGR frames on stdin and
+    sends H.264 over RTP to the given target.
+    """
+    url = out_target if "://" in out_target else f"rtp://{out_target}"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "bgr24",
+        "-s",
+        f"{width}x{height}",
+        "-r",
+        str(fps),
+        "-i",
+        "-",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-tune",
+        "zerolatency",
+        "-pix_fmt",
+        "yuv420p",
+    ]
+    if extra_args:
+        cmd.extend(extra_args)
+    cmd.extend(
+        [
+            "-f",
+            "rtp",
+            url,
+        ]
+    )
+    try:
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    except FileNotFoundError as exc:
+        raise RuntimeError("ffmpeg not found on PATH, required for RTP output.") from exc
+
+
 def compositor_loop(
     df,
     backdrop_bgr: np.ndarray,
@@ -117,6 +168,7 @@ def compositor_loop(
     lock: threading.Lock,
     stop_event: threading.Event,
     window_name: str = "Multiviewer",
+    rtp_proc: Optional[subprocess.Popen] = None,
 ) -> None:
     height, width = backdrop_bgr.shape[:2]
     try:
@@ -141,6 +193,14 @@ def compositor_loop(
                 x, y = int(row["x"]), int(row["y"])
                 h, w, _ = slot.shape
                 frame[y : y + h, x : x + w] = slot
+
+        if rtp_proc and rtp_proc.stdin:
+            try:
+                rtp_proc.stdin.write(frame.tobytes())
+            except BrokenPipeError:
+                stop_event.set()
+            except Exception:
+                stop_event.set()
 
         cv2.imshow(window_name, frame)
         key = cv2.waitKey(1) & 0xFF
@@ -174,6 +234,25 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Extra ffmpeg input option key=value (e.g. rtpflags=send_bye). Can be repeated.",
     )
+    parser.add_argument(
+        "--rtp-out",
+        type=str,
+        default=None,
+        help="RTP destination for the composed mosaic (e.g. 192.168.1.50:6910).",
+    )
+    parser.add_argument(
+        "--rtp-fps",
+        type=int,
+        default=30,
+        help="Framerate for RTP output when --rtp-out is set.",
+    )
+    parser.add_argument(
+        "--rtp-ffmpeg-arg",
+        action="append",
+        dest="rtp_ffmpeg_args",
+        default=None,
+        help="Extra ffmpeg args for RTP output (passed verbatim), repeatable.",
+    )
     return parser.parse_args()
 
 
@@ -202,6 +281,11 @@ def main() -> None:
     slots: Dict[str, np.ndarray] = {}
     lock = threading.Lock()
     stop_event = threading.Event()
+    rtp_proc: Optional[subprocess.Popen] = None
+    if args.rtp_out:
+        rtp_proc = start_rtp_writer(
+            args.rtp_out, args.width, args.height, args.rtp_fps, extra_args=args.rtp_ffmpeg_args
+        )
 
     # Handle Ctrl+C cleanly.
     def _handle_sigint(signum, frame):
@@ -230,10 +314,20 @@ def main() -> None:
         t.start()
         threads.append(t)
 
-    compositor_loop(df, backdrop_bgr, slots, lock, stop_event)
+    compositor_loop(df, backdrop_bgr, slots, lock, stop_event, rtp_proc=rtp_proc)
     stop_event.set()
     for t in threads:
         t.join(timeout=1.0)
+    if rtp_proc:
+        if rtp_proc.stdin:
+            try:
+                rtp_proc.stdin.close()
+            except Exception:
+                pass
+        try:
+            rtp_proc.terminate()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
