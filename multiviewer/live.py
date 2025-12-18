@@ -5,7 +5,7 @@ import signal
 import subprocess
 import threading
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 import av
 import cv2
@@ -109,6 +109,20 @@ def parse_ffmpeg_options(opt_list: Optional[Iterable[str]]) -> Dict[str, str]:
             raise ValueError(f"Invalid ffmpeg option '{raw}', missing key.")
         opts[key] = val
     return opts
+
+
+def parse_ffmpeg_arg_list(arg_list: Optional[Iterable[str]]) -> List[str]:
+    """
+    Flatten a list of ffmpeg args; each entry can contain multiple tokens.
+    """
+    import shlex
+
+    if not arg_list:
+        return []
+    flattened: List[str] = []
+    for raw in arg_list:
+        flattened.extend(shlex.split(raw))
+    return flattened
 
 
 def start_rtp_writer(
@@ -251,7 +265,8 @@ def parse_args() -> argparse.Namespace:
         action="append",
         dest="rtp_ffmpeg_args",
         default=None,
-        help="Extra ffmpeg args for RTP output (passed verbatim), repeatable.",
+        help="Extra ffmpeg args for RTP output (passed verbatim), repeatable. "
+        "Quote groups to keep pairs together, e.g. --rtp-ffmpeg-arg \"-sdp_file mosaic.sdp\"",
     )
     return parser.parse_args()
 
@@ -282,9 +297,10 @@ def main() -> None:
     lock = threading.Lock()
     stop_event = threading.Event()
     rtp_proc: Optional[subprocess.Popen] = None
+    rtp_ffmpeg_args = parse_ffmpeg_arg_list(args.rtp_ffmpeg_args)
     if args.rtp_out:
         rtp_proc = start_rtp_writer(
-            args.rtp_out, args.width, args.height, args.rtp_fps, extra_args=args.rtp_ffmpeg_args
+            args.rtp_out, args.width, args.height, args.rtp_fps, extra_args=rtp_ffmpeg_args
         )
 
     # Handle Ctrl+C cleanly.

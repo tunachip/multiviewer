@@ -22,7 +22,10 @@ Registry entries should include `ipAddress`; plain IPs get prefixed with `rtp://
   ```bash
   python -m multiviewer.live --registry example_registry.csv --width 1280 --height 720 --font-size 32 --rtp-out 192.168.1.50:6910 --rtp-fps 30
   ```
-  Use `--rtp-ffmpeg-arg` to pass extra ffmpeg args for the output (repeatable).
+  Use `--rtp-ffmpeg-arg` to pass extra ffmpeg args for the output (repeatable, quote groups), e.g.:
+  ```bash
+  --rtp-ffmpeg-arg "-sdp_file mosaic.sdp" --rtp-ffmpeg-arg "-loglevel info"
+  ```
 
 ### GUI note
 The live viewer uses OpenCV’s HighGUI (`cv2.namedWindow`/`imshow`). Install the non-headless package (`opencv-python`) and make sure your environment has GUI backends (GTK/Qt/X11) available; otherwise you’ll see a `cvNamedWindow` “re-run cmake” error. On headless servers, run under Xvfb/VNC or redirect to a machine with a display.
