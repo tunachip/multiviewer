@@ -145,6 +145,22 @@ def start_stream():
         proc = subprocess.Popen(cmd)
         processes[session_id] = proc
         hls_paths[session_id] = hls_dir
+
+        # Wait briefly for playlist to appear to avoid browser 404 loops.
+        playlist = hls_dir / "index.m3u8"
+        for _ in range(50):  # ~5s max
+            if playlist.exists():
+                break
+            import time
+
+            time.sleep(0.1)
+        if not playlist.exists():
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            return jsonify({"error": "Failed to start HLS (playlist not created)"}, ), 500
+
         return jsonify({"session": session_id, "hls_url": f"/hls/{session_id}/index.m3u8", "cmd": cmd})
     else:
         if not ip:

@@ -61,3 +61,4 @@ Then browse to `http://<server_ip>:8080`, enter your receiving IP/port, select c
 The UI also offers an “Open in VLC” link using the `vlc://` protocol; browsers may prompt/ask for permission.
 
 Browser playback (HLS): check “Play in browser (HLS)” in the web UI. It will start an HLS stream, expose `index.m3u8`, and play it inline using hls.js if supported by the browser.
+If the HLS stream fails to start, the server will return an error instead of serving a missing playlist.
