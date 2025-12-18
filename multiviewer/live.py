@@ -22,7 +22,7 @@ def _rtp_url(ip_address: str) -> str:
     if "://" in ip_address:
         return ip_address
     # If no explicit port is provided, default to 6000.
-    host, sep, maybe_port = ip_address.rpartition(":")
+    _, sep, maybe_port = ip_address.rpartition(":")
     has_port = sep == ":" and maybe_port.isdigit()
     if has_port:
         return f"rtp://{ip_address}"
@@ -30,7 +30,9 @@ def _rtp_url(ip_address: str) -> str:
 
 
 def _fit_frame(frame: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
-    """Resize frame to fit inside target while preserving aspect via letterboxing."""
+    """
+    Resize frame to fit inside target while preserving aspect via letterboxing.
+    """
     src_h, src_w = frame.shape[:2]
     scale = min(target_w / src_w, target_h / src_h)
     new_w, new_h = int(src_w * scale), int(src_h * scale)
@@ -45,7 +47,9 @@ def _fit_frame(frame: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
 
 
 def _failure_frame(w: int, h: int, message: str) -> np.ndarray:
-    """Create a red failure overlay frame."""
+    """
+    Create a red failure overlay frame.
+    """
     frame = np.zeros((h, w, 3), dtype=np.uint8)
     cv2.putText(
         frame,
@@ -61,14 +65,14 @@ def _failure_frame(w: int, h: int, message: str) -> np.ndarray:
 
 
 def stream_worker(
-    name: str,
-    url: str,
-    target_w: int,
-    target_h: int,
-    slots: Dict[str, np.ndarray],
-    lock: threading.Lock,
-    stop_event: threading.Event,
-    max_failures: int = 3,
+    name:           str,
+    url:            str,
+    target_w:       int,
+    target_h:       int,
+    slots:          Dict[str, np.ndarray],
+    lock:           threading.Lock,
+    stop_event:     threading.Event,
+    max_failures:   int = 3,
     format_options: Optional[Dict[str, str]] = None,
 ) -> None:
     attempts = 0
@@ -128,12 +132,12 @@ def parse_ffmpeg_arg_list(arg_list: Optional[Iterable[str]]) -> List[str]:
 
 def start_rtp_writer(
     out_target: str,
-    width: int,
-    height: int,
-    fps: int,
-    encoder: str = "libx264",
+    width:      int,
+    height:     int,
+    fps:        int,
+    encoder:    str = "libx264",
     extra_args: Optional[Iterable[str]] = None,
-    sdp_file: Optional[str] = None,
+    sdp_file:   Optional[str] = None,
 ) -> subprocess.Popen:
     """
     Launch an ffmpeg process that consumes raw BGR frames on stdin and
@@ -167,13 +171,7 @@ def start_rtp_writer(
         cmd.extend(["-sdp_file", sdp_file])
     if extra_args:
         cmd.extend(extra_args)
-    cmd.extend(
-        [
-            "-f",
-            "rtp",
-            url,
-        ]
-    )
+    cmd.extend(["-f", "rtp", url])
     try:
         return subprocess.Popen(cmd, stdin=subprocess.PIPE)
     except FileNotFoundError as exc:
@@ -183,13 +181,13 @@ def start_rtp_writer(
 def compositor_loop(
     df,
     backdrop_bgr: np.ndarray,
-    slots: Dict[str, np.ndarray],
-    lock: threading.Lock,
-    stop_event: threading.Event,
-    window_name: str = "Multiviewer",
-    rtp_proc: Optional[subprocess.Popen] = None,
-    hls_proc: Optional[subprocess.Popen] = None,
-    show_window: bool = True,
+    slots:        Dict[str, np.ndarray],
+    lock:         threading.Lock,
+    stop_event:   threading.Event,
+    window_name:  str = "Multiviewer",
+    rtp_proc:     Optional[subprocess.Popen] = None,
+    hls_proc:     Optional[subprocess.Popen] = None,
+    show_window:  bool = True,
 ) -> None:
     height, width = backdrop_bgr.shape[:2]
     if show_window:
@@ -250,81 +248,35 @@ def compositor_loop(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a live RTP multiviewer.")
     parser.add_argument("--registry", required=True, help="Path to the channel registry CSV.")
-    parser.add_argument("--width", type=int, default=1920, help="Screen width in pixels.")
-    parser.add_argument("--height", type=int, default=1080, help="Screen height in pixels.")
-    parser.add_argument("--padding", type=int, default=8, help="Padding between cells in pixels.")
-    parser.add_argument("--font-size", type=int, default=28, help="Font size for labels.")
-    parser.add_argument("--font", type=str, default=None, help="Optional TTF font path.")
-    parser.add_argument("--max-failures", type=int, default=3, help="Retries per stream before marking failed.")
-    parser.add_argument(
-        "--channel",
-        action="append",
-        dest="channels",
-        default=None,
-        help="Channel name to include (can be specified multiple times). Default: all.",
-    )
-    parser.add_argument(
-        "--ffmpeg-opt",
-        action="append",
-        dest="ffmpeg_opts",
-        default=None,
-        help="Extra ffmpeg input option key=value (e.g. rtpflags=send_bye). Can be repeated.",
-    )
-    parser.add_argument(
-        "--rtp-out",
-        type=str,
-        default=None,
-        help="RTP destination for the composed mosaic (e.g. 192.168.1.50:6910).",
-    )
-    parser.add_argument(
-        "--rtp-fps",
-        type=int,
-        default=30,
-        help="Framerate for RTP output when --rtp-out is set.",
-    )
-    parser.add_argument(
-        "--rtp-ffmpeg-arg",
-        action="append",
-        dest="rtp_ffmpeg_args",
-        default=None,
-        help="Extra ffmpeg args for RTP output (passed verbatim), repeatable. "
-        "Quote groups to keep pairs together, e.g. --rtp-ffmpeg-arg \"-sdp_file mosaic.sdp\"",
-    )
-    parser.add_argument(
-        "--rtp-encoder",
-        type=str,
-        default="libx264",
-        help="Video encoder for RTP output (default: libx264).",
-    )
-    parser.add_argument(
-        "--rtp-sdp-file",
-        type=str,
-        default=None,
-        help="Write an SDP file for the RTP output (e.g., mosaic.sdp).",
-    )
-    parser.add_argument(
-        "--hls-dir",
-        type=str,
-        default=None,
-        help="Directory to write HLS output (index.m3u8, segments). If set, HLS is produced.",
-    )
-    parser.add_argument(
-        "--hls-segment-time",
-        type=float,
-        default=1.0,
-        help="HLS segment duration in seconds (default: 1.0).",
-    )
-    parser.add_argument(
-        "--hls-list-size",
-        type=int,
-        default=6,
-        help="Number of segments to keep in the HLS playlist (default: 6).",
-    )
-    parser.add_argument(
-        "--no-window",
-        action="store_true",
-        help="Run headless (no local window); useful for servers where only RTP output is needed.",
-    )
+    parser.add_argument("--width",        type=int, default=1920, help="Screen width in pixels.")
+    parser.add_argument("--height",       type=int, default=1080, help="Screen height in pixels.")
+    parser.add_argument("--padding",      type=int, default=8,    help="Padding between cells in pixels.")
+    parser.add_argument("--font-size",    type=int, default=28,   help="Font size for labels.")
+    parser.add_argument("--font",         type=str, default=None, help="Optional TTF font path.")
+    parser.add_argument("--max-failures", type=int, default=3,    help="Retries per stream before marking failed.")
+    parser.add_argument( "--channel", action="append", dest="channels", default=None,
+                        help="Channel name to include (can be specified multiple times). Default: all.")
+    parser.add_argument( "--ffmpeg-opt", action="append", dest="ffmpeg_opts", default=None,
+                        help="Extra ffmpeg input option key=value (e.g. rtpflags=send_bye). Can be repeated.")
+    parser.add_argument( "--rtp-out", type=str, default=None,
+                        help="RTP destination for the composed mosaic (e.g. 192.168.1.50:6910).")
+    parser.add_argument( "--rtp-fps", type=int, default=30,
+                        help="Framerate for RTP output when --rtp-out is set.")
+    parser.add_argument( "--rtp-ffmpeg-arg", action="append", dest="rtp_ffmpeg_args", default=None,
+                        help="Extra ffmpeg args for RTP output (passed verbatim), repeatable. "
+                        "Quote groups to keep pairs together, e.g. --rtp-ffmpeg-arg \"-sdp_file mosaic.sdp\"")
+    parser.add_argument( "--rtp-encoder", type=str, default="libx264",
+                        help="Video encoder for RTP output (default: libx264).")
+    parser.add_argument( "--rtp-sdp-file", type=str, default=None,
+                        help="Write an SDP file for the RTP output (e.g., mosaic.sdp).")
+    parser.add_argument( "--hls-dir", type=str, default=None,
+                        help="Directory to write HLS output (index.m3u8, segments). If set, HLS is produced.")
+    parser.add_argument( "--hls-segment-time", type=float, default=1.0,
+                        help="HLS segment duration in seconds (default: 1.0).")
+    parser.add_argument( "--hls-list-size", type=int, default=6,
+                        help="Number of segments to keep in the HLS playlist (default: 6).")
+    parser.add_argument( "--no-window", action="store_true",
+                        help="Run headless (no local window); useful for servers where only RTP output is needed.")
     return parser.parse_args()
 
 
@@ -398,7 +350,10 @@ def main() -> None:
                 lock,
                 stop_event,
             ),
-            kwargs={"max_failures": args.max_failures, "format_options": ffmpeg_opts},
+            kwargs={
+                "max_failures": args.max_failures,
+                "format_options": ffmpeg_opts
+            },
             daemon=True,
         )
         t.start()
@@ -441,3 +396,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

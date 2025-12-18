@@ -6,13 +6,13 @@ import threading
 from pathlib import Path
 from typing import Dict, List
 import shutil
-import time
+#import time
 
 import polars as pl
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
 from .registry import load_registry
-from .hls import start_hls_writer
+#from .hls import start_hls_writer
 
 app = Flask(__name__)
 
@@ -65,59 +65,42 @@ def stop_session(session_id: str) -> None:
 
 
 def build_live_command(
-    ip: str | None,
-    port: int | None,
-    channels: List[str] | None,
-    sdp_path: Path | None,
-    width: int = 1280,
-    height: int = 720,
-    font_size: int = 32,
-    encoder: str = "mpeg4",
-    fps: int = 30,
-    hls_dir: Path | None = None,
+    ip:               str | None,
+    port:             int | None,
+    channels:         List[str] | None,
+    sdp_path:         Path | None,
+    width:            int = 1280,
+    height:           int = 720,
+    font_size:        int = 32,
+    encoder:          str = "mpeg4",
+    fps:              int = 30,
+    hls_dir:          Path | None = None,
     hls_segment_time: float = 1.0,
-    hls_list_size: int = 6,
+    hls_list_size:    int = 6,
 ) -> List[str]:
     cmd = [
-        "python",
-        "-m",
-        "multiviewer.live",
-        "--registry",
-        str(registry_path),
-        "--width",
-        str(width),
-        "--height",
-        str(height),
-        "--font-size",
-        str(font_size),
+        "python", "-m", "multiviewer.live",
+        "--registry",  str(registry_path),
+        "--width",     str(width),
+        "--height",    str(height),
+        "--font-size", str(font_size),
         "--no-window",
     ]
     if ip and port:
-        cmd.extend(
-            [
-                "--rtp-out",
-                f"{ip}:{port}",
-                "--rtp-fps",
-                str(fps),
-                "--rtp-encoder",
-                encoder,
-                "--rtp-ffmpeg-arg",
-                "-vf format=yuv420p",
-            ]
-        )
+        cmd.extend([
+            "--rtp-out",    f"{ip}:{port}",
+            "--rtp-fps",    str(fps),
+            "--rtp-encoder", encoder,
+            "--rtp-ffmpeg-arg", "-vf format=yuv420p",
+        ])
         if sdp_path:
             cmd.extend(["--rtp-sdp-file", str(sdp_path)])
     if hls_dir:
-        cmd.extend(
-            [
-                "--hls-dir",
-                str(hls_dir),
-                "--hls-segment-time",
-                str(hls_segment_time),
-                "--hls-list-size",
-                str(hls_list_size),
-            ]
-        )
+        cmd.extend([
+            "--hls-dir",          str(hls_dir),
+            "--hls-segment-time", str(hls_segment_time),
+            "--hls-list-size",    str(hls_list_size),
+        ])
     if channels:
         for ch in channels:
             cmd.extend(["--channel", ch])
@@ -147,17 +130,17 @@ def my_ip():
 def start_stream():
     if registry_df is None or registry_path is None:
         return jsonify({"error": "registry not initialized"}), 500
-    data = request.get_json(force=True, silent=True) or {}
-    ip = data.get("ip")
-    port = int(data.get("port", 5004))
-    channels = data.get("channels") or None
-    width = int(data.get("width", 1280))
-    height = int(data.get("height", 720))
+    data      = request.get_json(force=True, silent=True) or {}
+    ip        = data.get("ip")
+    port      = int(data.get("port", 5004))
+    channels  = data.get("channels") or None
+    width     = int(data.get("width", 1280))
+    height    = int(data.get("height", 720))
     font_size = int(data.get("fontSize", 32))
-    encoder = data.get("encoder", "mpeg4")
-    fps = int(data.get("fps", 30))
-    use_hls = bool(data.get("hls", False))
-    duration = int(data.get("duration", 300))  # seconds
+    encoder   = data.get("encoder", "mpeg4")
+    fps       = int(data.get("fps", 30))
+    use_hls   = bool(data.get("hls", False))
+    duration  = int(data.get("duration", 300))  # seconds
 
     session_id = secrets.token_hex(6)
 
@@ -211,7 +194,15 @@ def start_stream():
             return jsonify({"error": "ip is required"}), 400
         sdp_path = Path(f"/tmp/mosaic_{session_id}.sdp")
         cmd = build_live_command(
-            ip, port, channels, sdp_path, width=width, height=height, font_size=font_size, encoder=encoder, fps=fps
+            ip,
+            port,
+            channels,
+            sdp_path,
+            width=width,
+            height=height,
+            font_size=font_size,
+            encoder=encoder,
+            fps=fps
         )
 
         proc = subprocess.Popen(cmd)
@@ -251,8 +242,8 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Web UI to launch RTP multiviewer streams.")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--host",     default="0.0.0.0")
+    parser.add_argument("--port",     type=int, default=8080)
     parser.add_argument("--registry", default="example_registry.csv")
     args = parser.parse_args()
     run(host=args.host, port=args.port, registry=args.registry)
@@ -393,3 +384,4 @@ INDEX_HTML = """<!doctype html>
 
 if __name__ == "__main__":
     main()
+

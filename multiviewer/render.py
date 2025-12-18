@@ -55,9 +55,9 @@ def create_placeholder_grid_image(
     if df.height == 0:
         raise ValueError("Cannot render an empty registry.")
 
-    font = _load_font(font_size, font_path=font_path)
+    font  = _load_font(font_size, font_path=font_path)
     image = Image.new("RGB", (screen_width, screen_height), DARK_GREY)
-    draw = ImageDraw.Draw(image)
+    draw  = ImageDraw.Draw(image)
 
     for row in df.iter_rows(named=True):
         x, y, w, h = int(row["x"]), int(row["y"]), int(row["w"]), int(row["h"])
@@ -85,11 +85,11 @@ def create_placeholder_grid_image(
 
 def render_placeholder_grid(
     df: pl.DataFrame,
-    screen_width: int,
+    screen_width:  int,
     screen_height: int,
-    output_path: str | Path,
-    font_size: int = 28,
-    font_path: str | Path | None = None,
+    output_path:   str | Path,
+    font_size:     int = 28,
+    font_path:     str | Path | None = None,
 ) -> Path:
     """
     Render and persist a placeholder grid PNG to disk.
@@ -105,3 +105,4 @@ def render_placeholder_grid(
     output.parent.mkdir(parents=True, exist_ok=True)
     image.save(output)
     return output
+

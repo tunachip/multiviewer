@@ -9,9 +9,8 @@ from .render import render_placeholder_grid
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Generate a placeholder multiviewer mosaic.")
-    parser.add_argument("--registry", required=True,
+    parser = argparse.ArgumentParser( description="Generate a placeholder multiviewer mosaic.")
+    parser.add_argument( "--registry", required=True,
                         help="Path to the channel registry CSV.")
     parser.add_argument("--width", type=int, default=1920,
                         help="Screen width in pixels.")

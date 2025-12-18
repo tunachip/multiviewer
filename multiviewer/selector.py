@@ -4,7 +4,7 @@ import argparse
 import subprocess
 import sys
 import tkinter as tk
-from pathlib import Path
+#from pathlib import Path
 from tkinter import messagebox
 from typing import List
 
@@ -31,32 +31,25 @@ def fuzzy_subsequence(pattern: str, text: str) -> bool:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Select channels and launch live multiviewer.")
     parser.add_argument("--registry", required=True, help="Path to the channel registry CSV.")
-    parser.add_argument("--width", type=int, default=1920, help="Screen width in pixels.")
-    parser.add_argument("--height", type=int, default=1080, help="Screen height in pixels.")
-    parser.add_argument("--padding", type=int, default=8, help="Padding between cells in pixels.")
-    parser.add_argument("--font-size", type=int, default=28, help="Font size for labels.")
-    parser.add_argument("--font", type=str, default=None, help="Optional TTF font path.")
-    parser.add_argument("--max-failures", type=int, default=3, help="Retries per stream before marking failed.")
+    parser.add_argument("--width",        type=int, default=1920, help="Screen width in pixels.")
+    parser.add_argument("--height",       type=int, default=1080, help="Screen height in pixels.")
+    parser.add_argument("--padding",      type=int, default=8,    help="Padding between cells in pixels.")
+    parser.add_argument("--font-size",    type=int, default=28,   help="Font size for labels.")
+    parser.add_argument("--font",         type=str, default=None, help="Optional TTF font path.")
+    parser.add_argument("--max-failures", type=int, default=3,    help="Retries per stream before marking failed.")
     return parser.parse_args()
 
 
 def build_command(args: argparse.Namespace, channels: List[str]) -> list[str]:
     cmd = [
         sys.executable,
-        "-m",
-        "multiviewer.live",
-        "--registry",
-        args.registry,
-        "--width",
-        str(args.width),
-        "--height",
-        str(args.height),
-        "--padding",
-        str(args.padding),
-        "--font-size",
-        str(args.font_size),
-        "--max-failures",
-        str(args.max_failures),
+        "-m", "multiviewer.live",
+        "--registry",     args.registry,
+        "--width",        str(args.width),
+        "--height",       str(args.height),
+        "--padding",      str(args.padding),
+        "--font-size",    str(args.font_size),
+        "--max-failures", str(args.max_failures),
     ]
     if args.font:
         cmd.extend(["--font", args.font])
@@ -120,3 +113,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
