@@ -117,8 +117,6 @@ def start_stream():
         return jsonify({"error": "registry not initialized"}), 500
     data = request.get_json(force=True, silent=True) or {}
     ip = data.get("ip")
-    if not ip:
-        return jsonify({"error": "ip is required"}), 400
     port = int(data.get("port", 5004))
     channels = data.get("channels") or None
     width = int(data.get("width", 1280))
@@ -149,6 +147,8 @@ def start_stream():
         hls_paths[session_id] = hls_dir
         return jsonify({"session": session_id, "hls_url": f"/hls/{session_id}/index.m3u8", "cmd": cmd})
     else:
+        if not ip:
+            return jsonify({"error": "ip is required"}), 400
         sdp_path = Path(f"/tmp/mosaic_{session_id}.sdp")
         cmd = build_live_command(
             ip, port, channels, sdp_path, width=width, height=height, font_size=font_size, encoder=encoder, fps=fps
