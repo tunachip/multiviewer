@@ -62,3 +62,4 @@ The UI also offers an “Open in VLC” link using the `vlc://` protocol; browse
 
 Browser playback (HLS): check “Play in browser (HLS)” in the web UI. It will start an HLS stream, expose `index.m3u8`, and play it inline using hls.js if supported by the browser.
 If the HLS stream fails to start, the server will return an error instead of serving a missing playlist.
+The web UI also shows active sessions and lets you stop them; only one session per target IP is kept, and sessions auto-expire after a configurable duration (default 5 minutes). Advanced settings in the UI let you tweak encoder/bitrate/FPS/HLS segment size.

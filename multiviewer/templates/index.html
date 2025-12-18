@@ -1,0 +1,330 @@
+<!doctype html>
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<title>Multiviewer RTP Launcher</title>
+	<style>
+		:root {
+			color-scheme: dark;
+		}
+
+		body {
+			margin: 0;
+			font-family: sans-serif;
+			background: #0f0f10;
+			color: #f1f1f1;
+		}
+
+		.layout {
+			display: flex;
+			min-height: 100vh;
+		}
+
+		.sidebar {
+			width: 320px;
+			max-width: 90vw;
+			background: #16161a;
+			border-right: 1px solid #23232a;
+			padding: 16px;
+			box-sizing: border-box;
+			transition: transform 0.2s ease;
+		}
+
+		.sidebar.collapsed {
+			transform: translateX(-100%);
+		}
+
+		.toggle {
+			position: absolute;
+			top: 12px;
+			left: 12px;
+			z-index: 2;
+			background: #2d7cf6;
+			color: #fff;
+			border: none;
+			border-radius: 4px;
+			padding: 8px 12px;
+			cursor: pointer;
+		}
+
+		h2 {
+			margin-top: 0;
+		}
+
+		label {
+			display: block;
+			margin-top: 10px;
+			font-size: 14px;
+			color: #cfd1d5;
+		}
+
+		input,
+		select {
+			width: 100%;
+			padding: 8px;
+			border-radius: 6px;
+			border: 1px solid #2b2c33;
+			background: #1f1f26;
+			color: #f1f1f1;
+			box-sizing: border-box;
+		}
+
+		.channels {
+			height: 200px;
+		}
+
+		button.primary {
+			margin-top: 16px;
+			width: 100%;
+			padding: 12px 16px;
+			border: none;
+			border-radius: 6px;
+			background: #2d7cf6;
+			color: #fff;
+			cursor: pointer;
+			font-size: 15px;
+		}
+
+		button.primary:hover {
+			background: #1f65c9;
+		}
+
+		.status {
+			margin-top: 12px;
+			min-height: 22px;
+		}
+
+		.content {
+			flex: 1;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 16px;
+			box-sizing: border-box;
+		}
+
+		.player-wrap {
+			width: 100%;
+			max-width: 100%;
+		}
+
+		video {
+			width: 100%;
+			height: auto;
+			max-height: 90vh;
+			background: #000;
+			border: 1px solid #23232a;
+			border-radius: 8px;
+		}
+
+		.row {
+			display: flex;
+			gap: 8px;
+		}
+
+		.row>div {
+			flex: 1;
+		}
+
+		.sessions {
+			margin-top: 16px;
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse;
+			font-size: 13px;
+		}
+
+		th,
+		td {
+			border-bottom: 1px solid #23232a;
+			padding: 6px;
+			text-align: left;
+		}
+
+		.pill {
+			display: inline-block;
+			padding: 2px 6px;
+			border-radius: 10px;
+			background: #2d7cf6;
+			color: #fff;
+			font-size: 11px;
+		}
+
+		.danger {
+			background: #c0392b;
+			cursor: pointer;
+		}
+	</style>
+</head>
+
+<body>
+	<button class="toggle" onclick="toggleSidebar()">Settings</button>
+	<div class="layout">
+		<div id="sidebar" class="sidebar">
+			<h2>Start Stream</h2>
+			<label>Your IP address (receiver)</label>
+			<input id="ip" placeholder="e.g. 192.168.1.50">
+			<label>Port</label>
+			<input id="port" value="5004">
+			<label>Duration (seconds, default 300)</label>
+			<input id="duration" value="300">
+			<div class="row">
+				<div>
+					<label>FPS</label>
+					<input id="fps" value="30">
+				</div>
+				<div>
+					<label>Bitrate (kbps)</label>
+					<input id="bitrate" placeholder="e.g. 3500">
+				</div>
+			</div>
+			<div class="row">
+				<div>
+					<label>Encoder</label>
+					<input id="encoder" value="mpeg4">
+				</div>
+				<div>
+					<label>HLS Segment (s)</label>
+					<input id="hlsSegment" value="1.0">
+				</div>
+			</div>
+			<label>HLS List Size</label>
+			<input id="hlsListSize" value="6">
+			<label>Channels (Ctrl/Cmd+click to select multiple)</label>
+			<select id="channels" class="channels" multiple></select>
+			<label><input type="checkbox" id="hls"> Play in browser (HLS)</label>
+			<button class="primary" onclick="start()">Start Stream</button>
+			<div class="status" id="status"></div>
+			<div class="sessions">
+				<h3>Active Sessions</h3>
+				<div id="sessions"></div>
+			</div>
+		</div>
+		<div class="content">
+			<div class="player-wrap">
+				<video id="player" controls style="display:none"></video>
+			</div>
+		</div>
+	</div>
+	<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+	<script>
+		let hlsPlayer = null;
+		function toggleSidebar() {
+			const sb = document.getElementById('sidebar');
+			sb.classList.toggle('collapsed');
+		}
+		async function loadChannels() {
+			const res = await fetch('/api/channels');
+			const data = await res.json();
+			const sel = document.getElementById('channels');
+			sel.innerHTML = '';
+			(data.channels || []).forEach(name => {
+				const opt = document.createElement('option');
+				opt.value = name;
+				opt.textContent = name;
+				sel.appendChild(opt);
+			});
+		}
+
+		async function loadIp() {
+			try {
+				const res = await fetch('/api/me');
+				const data = await res.json();
+				if (data.ip) {
+					document.getElementById('ip').value = data.ip;
+				}
+			} catch (e) {
+				// ignore
+			}
+		}
+		async function start() {
+			const ip = document.getElementById('ip').value.trim();
+			const port = document.getElementById('port').value.trim() || '5004';
+			const duration = document.getElementById('duration').value.trim() || '300';
+			const fps = document.getElementById('fps').value.trim() || '30';
+			const bitrate = document.getElementById('bitrate').value.trim();
+			const encoder = document.getElementById('encoder').value.trim() || 'mpeg4';
+			const hlsSegment = document.getElementById('hlsSegment').value.trim() || '1.0';
+			const hlsListSize = document.getElementById('hlsListSize').value.trim() || '6';
+			const sel = document.getElementById('channels');
+			const channels = Array.from(sel.selectedOptions).map(o => o.value);
+			const hls = document.getElementById('hls').checked;
+			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize};
+			const res = await fetch('/api/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+			const data = await res.json();
+			const status = document.getElementById('status');
+			const player = document.getElementById('player');
+			player.style.display = 'none';
+			if (hlsPlayer) {
+				hlsPlayer.destroy();
+				hlsPlayer = null;
+			}
+			if (!res.ok) {
+				status.textContent = data.error || 'Failed to start.';
+				status.style.color = '#f66';
+				return;
+			}
+			if (data.hls_url) {
+				const hlsUrl = new URL(data.hls_url, window.location.origin).href;
+				status.innerHTML = 'Started HLS. <a href="' + hlsUrl + '" style="color:#6cf">Open playlist</a>';
+				status.style.color = '#6cf';
+				if (Hls.isSupported()) {
+					hlsPlayer = new Hls({liveDurationInfinity: true});
+					hlsPlayer.loadSource(hlsUrl);
+					hlsPlayer.attachMedia(player);
+					player.style.display = 'block';
+					player.play();
+				} else if (player.canPlayType('application/vnd.apple.mpegurl')) {
+					player.src = hlsUrl;
+					player.style.display = 'block';
+					player.play();
+				} else {
+					status.innerHTML += ' (Browser cannot play HLS natively)';
+				}
+			} else {
+				const sdpUrl = new URL(data.sdp_url, window.location.origin).href;
+				const vlcUrl = 'vlc://' + sdpUrl;
+				status.innerHTML = 'Started. <a href="' + sdpUrl + '" style="color:#6cf">Download SDP</a> or '
+					+ '<a href="' + vlcUrl + '" style="color:#9cf">Open in VLC</a> (may prompt)';
+				status.style.color = '#6cf';
+			}
+			fetchSessions();
+		}
+		loadChannels();
+		loadIp();
+		fetchSessions();
+
+		async function fetchSessions() {
+			try {
+				const res = await fetch('/api/sessions');
+				const data = await res.json();
+				const container = document.getElementById('sessions');
+				if (!res.ok) {container.textContent = data.error || 'Failed to load sessions'; return;}
+				const sessions = data.sessions || [];
+				if (!sessions.length) {container.textContent = 'No active sessions.'; return;}
+				let html = '<table><tr><th>ID</th><th>Mode</th><th>Target</th><th>Channels</th><th>Expires</th><th></th></tr>';
+				const now = Date.now() / 1000;
+				sessions.forEach(s => {
+					const target = (s.ip && s.port) ? `${s.ip}:${s.port}` : 'HLS';
+					const expires = s.expires_at ? Math.max(0, Math.round(s.expires_at - now)) + 's' : '';
+					html += `<tr><td>${s.id}</td><td><span class="pill">${s.mode || ''}</span></td><td>${target}</td><td>${(s.channels || []).join(', ')}</td><td>${expires}</td><td><button class="danger" onclick="stopSession('${s.id}')">Stop</button></td></tr>`;
+				});
+				html += '</table>';
+				container.innerHTML = html;
+			} catch (e) { }
+		}
+
+		async function stopSession(id) {
+			await fetch('/api/stop/' + id, {method: 'POST'});
+			fetchSessions();
+		}
+
+		setInterval(fetchSessions, 10000);
+	</script>
+</body>
+
+</html>
+

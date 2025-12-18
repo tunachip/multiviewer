@@ -132,12 +132,13 @@ def parse_ffmpeg_arg_list(arg_list: Optional[Iterable[str]]) -> List[str]:
 
 def start_rtp_writer(
     out_target: str,
-    width:      int,
-    height:     int,
-    fps:        int,
-    encoder:    str = "libx264",
+    width: int,
+    height: int,
+    fps: int,
+    encoder: str = "libx264",
+    bitrate_kbps: Optional[int] = None,
     extra_args: Optional[Iterable[str]] = None,
-    sdp_file:   Optional[str] = None,
+    sdp_file: Optional[str] = None,
 ) -> subprocess.Popen:
     """
     Launch an ffmpeg process that consumes raw BGR frames on stdin and
@@ -167,6 +168,8 @@ def start_rtp_writer(
         "-pix_fmt",
         "yuv420p",
     ]
+    if bitrate_kbps:
+        cmd.extend(["-b:v", f"{bitrate_kbps}k"])
     if sdp_file:
         cmd.extend(["-sdp_file", sdp_file])
     if extra_args:
@@ -266,7 +269,9 @@ def parse_args() -> argparse.Namespace:
                         help="Extra ffmpeg args for RTP output (passed verbatim), repeatable. "
                         "Quote groups to keep pairs together, e.g. --rtp-ffmpeg-arg \"-sdp_file mosaic.sdp\"")
     parser.add_argument( "--rtp-encoder", type=str, default="libx264",
-                        help="Video encoder for RTP output (default: libx264).")
+                        help="Video encoder for RTP/HLS output (default: libx264).")
+    parser.add_argument( "--rtp-bitrate-kbps", type=int, default=None,
+                        help="Target video bitrate in kbps for RTP/HLS output.")
     parser.add_argument( "--rtp-sdp-file", type=str, default=None,
                         help="Write an SDP file for the RTP output (e.g., mosaic.sdp).")
     parser.add_argument( "--hls-dir", type=str, default=None,
@@ -275,6 +280,8 @@ def parse_args() -> argparse.Namespace:
                         help="HLS segment duration in seconds (default: 1.0).")
     parser.add_argument( "--hls-list-size", type=int, default=6,
                         help="Number of segments to keep in the HLS playlist (default: 6).")
+    parser.add_argument( "--hls-bitrate-kbps", type=int, default=None,
+                        help="Target video bitrate in kbps for HLS output (overrides rtp-bitrate-kbps if set).")
     parser.add_argument( "--no-window", action="store_true",
                         help="Run headless (no local window); useful for servers where only RTP output is needed.")
     return parser.parse_args()
@@ -315,6 +322,7 @@ def main() -> None:
             args.height,
             args.rtp_fps,
             encoder=args.rtp_encoder,
+            bitrate_kbps=args.rtp_bitrate_kbps,
             extra_args=rtp_ffmpeg_args,
             sdp_file=args.rtp_sdp_file,
         )
@@ -327,6 +335,7 @@ def main() -> None:
             segment_time=args.hls_segment_time,
             list_size=args.hls_list_size,
             encoder=args.rtp_encoder,
+            bitrate_kbps=args.hls_bitrate_kbps or args.rtp_bitrate_kbps,
         )
 
     # Handle Ctrl+C cleanly.
@@ -396,4 +405,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

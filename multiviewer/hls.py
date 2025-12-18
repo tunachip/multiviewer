@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-#import os
 import subprocess
-#import threading
 from pathlib import Path
 from typing import Iterable, Optional
-
-#import numpy as np
 
 
 def start_hls_writer(
@@ -17,6 +13,7 @@ def start_hls_writer(
     segment_time: float = 1.0,
     list_size: int = 6,
     encoder: str = "libx264",
+    bitrate_kbps: int | None = None,
     extra_args: Optional[Iterable[str]] = None,
 ) -> subprocess.Popen:
     """
@@ -59,6 +56,8 @@ def start_hls_writer(
         str(segment_pattern),
         str(playlist),
     ]
+    if bitrate_kbps:
+        cmd.extend(["-b:v", f"{bitrate_kbps}k"])
     if extra_args:
         cmd[1:1] = list(extra_args)  # insert after ffmpeg for any global args
     try:

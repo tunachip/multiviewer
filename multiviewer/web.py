@@ -6,15 +6,14 @@ import threading
 from pathlib import Path
 from typing import Dict, List
 import shutil
-#import time
+import time
 
 import polars as pl
-from flask import Flask, jsonify, request, send_file, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
 
 from .registry import load_registry
-#from .hls import start_hls_writer
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates")
 
 # Basic in-memory process registry.
 processes: Dict[str, subprocess.Popen] = {}
@@ -22,6 +21,7 @@ sdp_paths: Dict[str, Path] = {}
 hls_paths: Dict[str, Path] = {}
 session_timers: Dict[str, threading.Timer] = {}
 sessions_by_target_ip: Dict[str, str] = {}
+session_meta: Dict[str, Dict] = {}
 registry_df: pl.DataFrame | None = None
 registry_path: Path | None = None
 registry_lock = threading.Lock()
@@ -62,6 +62,7 @@ def stop_session(session_id: str) -> None:
             sdp.unlink()
         except Exception:
             pass
+    meta = session_meta.pop(session_id, None)
 
 
 def build_live_command(
@@ -77,6 +78,7 @@ def build_live_command(
     hls_dir:          Path | None = None,
     hls_segment_time: float = 1.0,
     hls_list_size:    int = 6,
+    bitrate_kbps:     int | None = None,
 ) -> List[str]:
     cmd = [
         "python", "-m", "multiviewer.live",
@@ -93,6 +95,8 @@ def build_live_command(
             "--rtp-encoder", encoder,
             "--rtp-ffmpeg-arg", "-vf format=yuv420p",
         ])
+        if bitrate_kbps:
+            cmd.extend(["--rtp-bitrate-kbps", str(bitrate_kbps)])
         if sdp_path:
             cmd.extend(["--rtp-sdp-file", str(sdp_path)])
     if hls_dir:
@@ -101,6 +105,8 @@ def build_live_command(
             "--hls-segment-time", str(hls_segment_time),
             "--hls-list-size",    str(hls_list_size),
         ])
+        if bitrate_kbps:
+            cmd.extend(["--hls-bitrate-kbps", str(bitrate_kbps)])
     if channels:
         for ch in channels:
             cmd.extend(["--channel", ch])
@@ -109,7 +115,7 @@ def build_live_command(
 
 @app.route("/")
 def index():
-    return INDEX_HTML
+    return render_template("index.html")
 
 
 @app.route("/api/channels")
@@ -126,6 +132,34 @@ def my_ip():
     return jsonify({"ip": get_request_ip()})
 
 
+@app.route("/api/sessions")
+def list_sessions():
+    now = time.time()
+    items = []
+    for sid, meta in session_meta.items():
+        expires_at = meta.get("started_at", now) + meta.get("duration", 0)
+        items.append(
+            {
+                "id": sid,
+                "ip": meta.get("ip"),
+                "port": meta.get("port"),
+                "channels": meta.get("channels"),
+                "mode": meta.get("mode"),
+                "started_at": meta.get("started_at"),
+                "expires_at": expires_at,
+            }
+        )
+    return jsonify({"sessions": items})
+
+
+@app.route("/api/stop/<session_id>", methods=["POST"])
+def stop_session_api(session_id: str):
+    if session_id not in processes:
+        return jsonify({"error": "session not found"}), 404
+    stop_session(session_id)
+    return jsonify({"stopped": session_id})
+
+
 @app.route("/api/start", methods=["POST"])
 def start_stream():
     if registry_df is None or registry_path is None:
@@ -137,10 +171,14 @@ def start_stream():
     width     = int(data.get("width", 1280))
     height    = int(data.get("height", 720))
     font_size = int(data.get("fontSize", 32))
-    encoder   = data.get("encoder", "mpeg4")
-    fps       = int(data.get("fps", 30))
-    use_hls   = bool(data.get("hls", False))
-    duration  = int(data.get("duration", 300))  # seconds
+    encoder    = data.get("encoder", "mpeg4")
+    fps        = int(data.get("fps", 30))
+    use_hls    = bool(data.get("hls", False))
+    duration   = int(data.get("duration", 300))  # seconds
+    bitrate    = data.get("bitrateKbps")
+    bitrate    = int(bitrate) if bitrate not in (None, "",) else None
+    hls_segment = float(data.get("hlsSegment", 1.0))
+    hls_list_size = int(data.get("hlsListSize", 6))
 
     session_id = secrets.token_hex(6)
 
@@ -163,10 +201,21 @@ def start_stream():
             encoder=encoder,
             fps=fps,
             hls_dir=hls_dir,
+            hls_segment_time=hls_segment,
+            hls_list_size=hls_list_size,
+            bitrate_kbps=bitrate,
         )
         proc = subprocess.Popen(cmd)
         processes[session_id] = proc
         hls_paths[session_id] = hls_dir
+        session_meta[session_id] = {
+            "mode": "hls",
+            "ip": None,
+            "port": None,
+            "channels": channels,
+            "started_at": time.time(),
+            "duration": duration,
+        }
         # schedule timeout
         t = threading.Timer(duration, stop_session, args=[session_id])
         t.daemon = True
@@ -202,13 +251,22 @@ def start_stream():
             height=height,
             font_size=font_size,
             encoder=encoder,
-            fps=fps
+            fps=fps,
+            bitrate_kbps=bitrate,
         )
 
         proc = subprocess.Popen(cmd)
         processes[session_id] = proc
         sdp_paths[session_id] = sdp_path
         sessions_by_target_ip[ip] = session_id
+        session_meta[session_id] = {
+            "mode": "rtp",
+            "ip": ip,
+            "port": port,
+            "channels": channels,
+            "started_at": time.time(),
+            "duration": duration,
+        }
         t = threading.Timer(duration, stop_session, args=[session_id])
         t.daemon = True
         t.start()
@@ -249,139 +307,5 @@ def main():
     run(host=args.host, port=args.port, registry=args.registry)
 
 
-INDEX_HTML = """<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Multiviewer RTP Launcher</title>
-  <style>
-    :root { color-scheme: dark; }
-    body { margin: 0; font-family: sans-serif; background: #0f0f10; color: #f1f1f1; }
-    .layout { display: flex; min-height: 100vh; }
-    .sidebar { width: 320px; max-width: 90vw; background: #16161a; border-right: 1px solid #23232a; padding: 16px; box-sizing: border-box; transition: transform 0.2s ease; }
-    .sidebar.collapsed { transform: translateX(-100%); }
-    .toggle { position: absolute; top: 12px; left: 12px; z-index: 2; background: #2d7cf6; color: #fff; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer; }
-    h2 { margin-top: 0; }
-    label { display: block; margin-top: 10px; font-size: 14px; color: #cfd1d5; }
-    input, select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #2b2c33; background: #1f1f26; color: #f1f1f1; box-sizing: border-box; }
-    .channels { height: 200px; }
-    button.primary { margin-top: 16px; width: 100%; padding: 12px 16px; border: none; border-radius: 6px; background: #2d7cf6; color: #fff; cursor: pointer; font-size: 15px; }
-    button.primary:hover { background: #1f65c9; }
-    .status { margin-top: 12px; min-height: 22px; }
-    .content { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
-    .player-wrap { width: 100%; max-width: 100%; }
-    video { width: 100%; height: auto; max-height: 90vh; background: #000; border: 1px solid #23232a; border-radius: 8px; }
-  </style>
-</head>
-<body>
-  <button class="toggle" onclick="toggleSidebar()">Settings</button>
-  <div class="layout">
-    <div id="sidebar" class="sidebar">
-      <h2>Start Stream</h2>
-      <label>Your IP address (receiver)</label>
-      <input id="ip" placeholder="e.g. 192.168.1.50">
-      <label>Port</label>
-      <input id="port" value="5004">
-      <label>Duration (seconds, default 300)</label>
-      <input id="duration" value="300">
-      <label>Channels (Ctrl/Cmd+click to select multiple)</label>
-      <select id="channels" class="channels" multiple></select>
-      <label><input type="checkbox" id="hls"> Play in browser (HLS)</label>
-      <button class="primary" onclick="start()">Start Stream</button>
-      <div class="status" id="status"></div>
-    </div>
-    <div class="content">
-      <div class="player-wrap">
-        <video id="player" controls style="display:none"></video>
-      </div>
-    </div>
-  </div>
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-  <script>
-    let hlsPlayer = null;
-    function toggleSidebar() {
-      const sb = document.getElementById('sidebar');
-      sb.classList.toggle('collapsed');
-    }
-    async function loadChannels() {
-      const res = await fetch('/api/channels');
-      const data = await res.json();
-      const sel = document.getElementById('channels');
-      sel.innerHTML = '';
-      (data.channels || []).forEach(name => {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = name;
-        sel.appendChild(opt);
-      });
-    }
-
-    async function loadIp() {
-      try {
-        const res = await fetch('/api/me');
-        const data = await res.json();
-        if (data.ip) {
-          document.getElementById('ip').value = data.ip;
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-    async function start() {
-      const ip = document.getElementById('ip').value.trim();
-      const port = document.getElementById('port').value.trim() || '5004';
-      const duration = document.getElementById('duration').value.trim() || '300';
-      const sel = document.getElementById('channels');
-      const channels = Array.from(sel.selectedOptions).map(o => o.value);
-      const hls = document.getElementById('hls').checked;
-      const payload = { ip, port, channels, hls, duration };
-      const res = await fetch('/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      const data = await res.json();
-      const status = document.getElementById('status');
-      const player = document.getElementById('player');
-      player.style.display = 'none';
-      if (hlsPlayer) {
-        hlsPlayer.destroy();
-        hlsPlayer = null;
-      }
-      if (!res.ok) {
-        status.textContent = data.error || 'Failed to start.';
-        status.style.color = '#f66';
-        return;
-      }
-      if (data.hls_url) {
-        const hlsUrl = new URL(data.hls_url, window.location.origin).href;
-        status.innerHTML = 'Started HLS. <a href="'+hlsUrl+'" style="color:#6cf">Open playlist</a>';
-        status.style.color = '#6cf';
-        if (Hls.isSupported()) {
-          hlsPlayer = new Hls({ liveDurationInfinity: true });
-          hlsPlayer.loadSource(hlsUrl);
-          hlsPlayer.attachMedia(player);
-          player.style.display = 'block';
-          player.play();
-        } else if (player.canPlayType('application/vnd.apple.mpegurl')) {
-          player.src = hlsUrl;
-          player.style.display = 'block';
-          player.play();
-        } else {
-          status.innerHTML += ' (Browser cannot play HLS natively)';
-        }
-      } else {
-        const sdpUrl = new URL(data.sdp_url, window.location.origin).href;
-        const vlcUrl = 'vlc://' + sdpUrl;
-        status.innerHTML = 'Started. <a href="'+sdpUrl+'" style="color:#6cf">Download SDP</a> or '
-          + '<a href="'+vlcUrl+'" style="color:#9cf">Open in VLC</a> (may prompt)';
-        status.style.color = '#6cf';
-      }
-    }
-    loadChannels();
-    loadIp();
-  </script>
-</body>
-</html>
-"""
-
-
 if __name__ == "__main__":
     main()
-
