@@ -37,35 +37,39 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
     """
     Run a short tcpdump capture for the destination host/port and return the first source IP/port seen.
     """
-    # Kick off a short ffprobe to issue an IGMP join so packets flow.
-    try:
-        subprocess.run(
-            ["ffprobe", "-v", "error", "-timeout", str(timeout * 1_000_000), "-i", f"udp://@{dst_host}:{dst_port}"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout,
-            check=False,
-        )
-    except FileNotFoundError:
-        pass
-    except subprocess.TimeoutExpired:
-        pass
-
     flt = f"udp and dst host {dst_host} and dst port {dst_port}"
     try:
-        proc = subprocess.run(
+        tcpdump_proc = subprocess.Popen(
             ["tcpdump", "-i", iface, "-nn", "-c", str(packets), "-w", "-", flt],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=timeout,
-            check=False,
         )
     except FileNotFoundError as exc:
         raise SystemExit("tcpdump not found on PATH") from exc
+    # Kick off a short ffprobe to issue an IGMP join so packets flow while tcpdump listens.
+    join_proc = None
+    try:
+        join_proc = subprocess.Popen(
+            ["ffprobe", "-v", "error", "-timeout", str(timeout * 1_000_000), "-i", f"udp://@{dst_host}:{dst_port}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except FileNotFoundError:
+        join_proc = None
+    try:
+        stdout, stderr = tcpdump_proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        return None, None
+        tcpdump_proc.kill()
+        stdout, stderr = tcpdump_proc.communicate()
+    # Ensure join proc is terminated
+    if join_proc and join_proc.poll() is None:
+        try:
+            join_proc.terminate()
+        except Exception:
+            pass
+    pkt_bytes = stdout or b""
+    stderr_bytes = stderr or b""
     # Try parsing pcap bytes directly for robustness.
-    pkt_bytes = proc.stdout or b""
     if pkt_bytes:
         try:
             import struct
@@ -98,7 +102,7 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
             pass
 
     # Fallback to text parsing from stderr if tcpdump emitted summary.
-    output = (proc.stderr or b"").decode(errors="ignore").splitlines()
+    output = stderr_bytes.decode(errors="ignore").splitlines()
     def pick_line(lines):
         for ln in lines:
             if ">" in ln and "UDP" in ln and (" IP " in ln or ln.startswith("IP")):
