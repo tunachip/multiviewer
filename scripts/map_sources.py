@@ -40,9 +40,9 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
     flt = f"udp and dst host {dst_host} and dst port {dst_port}"
     try:
         proc = subprocess.run(
-            ["tcpdump", "-i", iface, "-nn", "-c", str(packets), flt],
+            ["tcpdump", "-i", iface, "-nn", "-c", str(packets), "-w", "-", flt],
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             timeout=timeout,
             check=False,
         )
@@ -50,28 +50,62 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
         raise SystemExit("tcpdump not found on PATH") from exc
     except subprocess.TimeoutExpired:
         return None, None
-    output = (proc.stdout or b"").decode(errors="ignore").splitlines()
-    # Match IPv4 src:port > dst:port even when src IP has trailing numbers without dot separation
-    ip_re = re.compile(r"IP.*?\s([\d\.]+)\.(\d+)\s+>\s+([\d\.]+)\.(\d+)")
+    # Try parsing pcap bytes directly for robustness.
+    pkt_bytes = proc.stdout or b""
+    if pkt_bytes:
+        try:
+            import struct
 
+            # pcap global header is 24 bytes.
+            if len(pkt_bytes) >= 24 + 16:
+                magic = pkt_bytes[0:4]
+                little = magic in (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1")
+                endian = "<" if little else ">"
+                # First packet header starts at 24.
+                pkt_off = 24
+                if len(pkt_bytes) >= pkt_off + 16:
+                    incl_len = struct.unpack(endian + "I", pkt_bytes[pkt_off + 8 : pkt_off + 12])[0]
+                    data_off = pkt_off + 16
+                    pkt = pkt_bytes[data_off : data_off + incl_len]
+                    # Ethernet header 14 bytes; check IPv4 (0x0800)
+                    if len(pkt) >= 14 + 20:
+                        eth_type = struct.unpack(endian + "H", pkt[12:14])[0]
+                        if eth_type == 0x0800:
+                            ip_header = pkt[14:]
+                            ihl = (ip_header[0] & 0x0F) * 4
+                            src_ip = ".".join(str(b) for b in ip_header[12:16])
+                            # UDP header after IP
+                            udp_off = 14 + ihl
+                            if len(pkt) >= udp_off + 4:
+                                udp_hdr = pkt[udp_off : udp_off + 4]
+                                src_port = struct.unpack(endian + "H", udp_hdr[0:2])[0]
+                                return src_ip, src_port
+        except Exception:
+            pass
+
+    # Fallback to text parsing from stderr if tcpdump emitted summary.
+    output = (proc.stderr or b"").decode(errors="ignore").splitlines()
     def pick_line(lines):
         for ln in lines:
-            if "IP " in ln and " > " in ln:
+            if ">" in ln and "UDP" in ln and (" IP " in ln or ln.startswith("IP")):
                 return ln
         return None
 
     line = pick_line(output)
     if not line and len(output) >= 4:
         line = output[-4]
-    if line:
-        m = ip_re.search(line)
-        if m:
-            src_ip, src_port, _, _ = m.groups()
-            # Sometimes tcpdump prints truncated octets; if src_ip has more than 4 octets, trim last segment.
-            parts = src_ip.split(".")
-            if len(parts) > 4:
-                src_ip = ".".join(parts[:4])
-            return src_ip, int(src_port)
+    if line and ">" in line:
+        try:
+            lhs = line.split(">", 1)[0].strip()
+            src_token = lhs.split()[-1]
+            if "." in src_token:
+                ip_part, port_part = src_token.rsplit(".", 1)
+                parts = ip_part.split(".")
+                if len(parts) > 4:
+                    ip_part = ".".join(parts[:4])
+                return ip_part, int(port_part)
+        except Exception:
+            pass
     return None, None
 
 
