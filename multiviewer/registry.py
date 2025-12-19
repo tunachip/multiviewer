@@ -39,6 +39,18 @@ def load_registry(csv_path: str | Path) -> pl.DataFrame:
     else:
         df = df.with_columns(pl.lit("").alias("trim"))
 
+    # Optional programId, width/height/fps metadata for fan-out and encoding hints.
+    if "programId" in df.columns:
+        df = df.with_columns(pl.col("programId").cast(pl.Int64, strict=False))
+    else:
+        df = df.with_columns(pl.lit(None).cast(pl.Int64).alias("programId"))
+    if "videoWidth" not in df.columns:
+        df = df.with_columns(pl.lit(None).cast(pl.Int64).alias("videoWidth"))
+    if "videoHeight" not in df.columns:
+        df = df.with_columns(pl.lit(None).cast(pl.Int64).alias("videoHeight"))
+    if "fps" not in df.columns:
+        df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("fps"))
+
     return df.select(
         [
             pl.col("channelName").cast(pl.Utf8),
@@ -46,6 +58,10 @@ def load_registry(csv_path: str | Path) -> pl.DataFrame:
             pl.col("ipAddress").cast(pl.Utf8),
             pl.col("rotation").cast(pl.Int64, strict=False).fill_null(0),
             pl.col("trim").cast(pl.Utf8),
+            pl.col("programId"),
+            pl.col("videoWidth"),
+            pl.col("videoHeight"),
+            pl.col("fps"),
             pl.all().exclude(list(REQUIRED_COLUMNS | {"rotation", "trim"})),
         ]
     )

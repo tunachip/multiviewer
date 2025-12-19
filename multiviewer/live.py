@@ -18,6 +18,7 @@ from .layout import assign_grid, assign_grid_with_positions, apply_transforms
 from .registry import load_registry
 from .render import create_placeholder_grid_image
 from .hls import start_hls_writer
+from .fanout import ensure_fanouts_for_dataframe
 
 
 def _rtp_url(ip_address: str) -> str:
@@ -517,6 +518,12 @@ def parse_args() -> argparse.Namespace:
                         help="Enable per-stream decode stats written to diagnostics_<date>.csv.")
     parser.add_argument( "--diagnostics-interval", type=float, default=5.0,
                         help="Seconds between diagnostics samples (default: 5).")
+    parser.add_argument( "--auto-fanout", action="store_true",
+                        help="Join multicast streams once and remux requested programIds to local UDP ports.")
+    parser.add_argument( "--fanout-cache", type=str, default=str(Path.home() / ".cache" / "multiviewer" / "fanout_cache.csv"),
+                        help="Path to cache fan-out metadata (programId/local port/video metadata).")
+    parser.add_argument( "--fanout-base-port", type=int, default=7000,
+                        help="Starting local UDP port for fan-out outputs (default: 7000).")
     return parser.parse_args()
 
 
@@ -529,6 +536,13 @@ def main() -> None:
         if df.is_empty():
             raise SystemExit("No matching channels found for selection.")
     df = apply_transforms(df)
+    # Optionally fan out multicast + programId sources to local UDP to avoid repeated joins.
+    if args.auto_fanout:
+        df, fanout_procs, _ = ensure_fanouts_for_dataframe(
+            df,
+            cache_path=Path(args.fanout_cache),
+            base_port=args.fanout_base_port,
+        )
     if {"row", "col"} <= set(df.columns):
         df = assign_grid_with_positions(df, args.width, args.height, padding=args.padding)
     else:
@@ -550,6 +564,7 @@ def main() -> None:
     lock = threading.Lock()
     stop_event = threading.Event()
     diagnostics: Optional[DiagnosticsReporter] = None
+    fanout_procs: List[subprocess.Popen] = []
     rtp_proc: Optional[subprocess.Popen] = None
     hls_proc: Optional[subprocess.Popen] = None
     rtp_ffmpeg_args = parse_ffmpeg_arg_list(args.rtp_ffmpeg_args)
@@ -627,6 +642,11 @@ def main() -> None:
     stop_event.set()
     for t in threads:
         t.join(timeout=1.0)
+    for proc in fanout_procs:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
     if rtp_proc:
         if rtp_proc.stdin:
             try:
