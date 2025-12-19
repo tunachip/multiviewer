@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -98,6 +100,92 @@ def _apply_trim(img: np.ndarray, trim_expr: str) -> np.ndarray:
         return img
 
 
+class DiagnosticsReporter:
+    """
+    Lightweight per-stream metrics writer that logs frames/sec and errors
+    to diagnostics_<YYYY-MM-DD>.csv while the app runs.
+    """
+
+    def __init__(
+        self,
+        stop_event: threading.Event,
+        interval_sec: float = 5.0,
+        output_dir: Path | None = None,
+    ) -> None:
+        self.stop_event = stop_event
+        self.interval = max(0.5, interval_sec)
+        self.metrics: Dict[str, Dict[str, object]] = {}
+        self.lock = threading.Lock()
+        date_str = time.strftime("%Y-%m-%d")
+        base_dir = Path(output_dir) if output_dir else Path.cwd()
+        base_dir.mkdir(parents=True, exist_ok=True)
+        self.path = base_dir / f"diagnostics_{date_str}.csv"
+        self._file = self.path.open("a", newline="")
+        self._writer = csv.writer(self._file)
+        if self.path.stat().st_size == 0:
+            self._writer.writerow(
+                ["timestamp", "stream", "frames", "fps", "total_frames", "errors", "last_error"]
+            )
+            self._file.flush()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def record_frame(self, name: str) -> None:
+        with self.lock:
+            m = self.metrics.setdefault(
+                name,
+                {"frames_since": 0, "total_frames": 0, "errors": 0, "last_error": ""},
+            )
+            m["frames_since"] = int(m["frames_since"]) + 1
+            m["total_frames"] = int(m["total_frames"]) + 1
+
+    def record_error(self, name: str, message: str) -> None:
+        with self.lock:
+            m = self.metrics.setdefault(
+                name,
+                {"frames_since": 0, "total_frames": 0, "errors": 0, "last_error": ""},
+            )
+            m["errors"] = int(m["errors"]) + 1
+            m["last_error"] = message
+
+    def _loop(self) -> None:
+        while not self.stop_event.wait(self.interval):
+            timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+            rows: List[List[object]] = []
+            with self.lock:
+                for name, m in self.metrics.items():
+                    frames = int(m.get("frames_since", 0) or 0)
+                    fps = frames / self.interval
+                    rows.append(
+                        [
+                            timestamp,
+                            name,
+                            frames,
+                            round(fps, 2),
+                            int(m.get("total_frames", 0) or 0),
+                            int(m.get("errors", 0) or 0),
+                            m.get("last_error", ""),
+                        ]
+                    )
+                    m["frames_since"] = 0
+            if rows:
+                self._writer.writerows(rows)
+                self._file.flush()
+
+    def close(self) -> None:
+        self.stop_event.set()
+        if self.thread.is_alive():
+            self.thread.join(timeout=1.0)
+        try:
+            self._file.flush()
+        except Exception:
+            pass
+        try:
+            self._file.close()
+        except Exception:
+            pass
+
+
 def stream_worker(
     name:           str,
     url:            str,
@@ -111,6 +199,7 @@ def stream_worker(
     max_failures:   int = 3,
     format_options: Optional[Dict[str, str]] = None,
     use_gpu_decode: bool = False,
+    diagnostics:    Optional[DiagnosticsReporter] = None,
 ) -> None:
     attempts = 0
     while not stop_event.is_set() and attempts < max_failures:
@@ -124,6 +213,8 @@ def stream_worker(
                         img = _apply_trim(img, trim_expr)
                     with lock:
                         slots[name] = img
+                    if diagnostics:
+                        diagnostics.record_frame(name)
             else:
                 with av.open(url, options=format_options or {}) as container:
                     for frame in container.decode(video=0):
@@ -139,8 +230,12 @@ def stream_worker(
                         fitted = _fit_frame(img, target_w, target_h)
                         with lock:
                             slots[name] = fitted
-        except Exception:
+                        if diagnostics:
+                            diagnostics.record_frame(name)
+        except Exception as exc:
             attempts += 1
+            if diagnostics:
+                diagnostics.record_error(name, str(exc))
             continue
 
     if stop_event.is_set():
@@ -418,6 +513,10 @@ def parse_args() -> argparse.Namespace:
                         help="Run headless (no local window); useful for servers where only RTP output is needed.")
     parser.add_argument( "--gpu-decode", action="store_true",
                         help="Use ffmpeg with CUDA/NVDEC for decoding streams.")
+    parser.add_argument( "--diagnostics", action="store_true",
+                        help="Enable per-stream decode stats written to diagnostics_<date>.csv.")
+    parser.add_argument( "--diagnostics-interval", type=float, default=5.0,
+                        help="Seconds between diagnostics samples (default: 5).")
     return parser.parse_args()
 
 
@@ -450,9 +549,12 @@ def main() -> None:
     slots: Dict[str, np.ndarray] = {}
     lock = threading.Lock()
     stop_event = threading.Event()
+    diagnostics: Optional[DiagnosticsReporter] = None
     rtp_proc: Optional[subprocess.Popen] = None
     hls_proc: Optional[subprocess.Popen] = None
     rtp_ffmpeg_args = parse_ffmpeg_arg_list(args.rtp_ffmpeg_args)
+    if args.diagnostics:
+        diagnostics = DiagnosticsReporter(stop_event, interval_sec=args.diagnostics_interval)
     if args.rtp_out:
         rtp_proc = start_rtp_writer(
             args.rtp_out,
@@ -505,6 +607,7 @@ def main() -> None:
                 "max_failures": args.max_failures,
                 "format_options": ffmpeg_opts,
                 "use_gpu_decode": args.gpu_decode,
+                "diagnostics": diagnostics,
             },
             daemon=True,
         )
@@ -544,6 +647,8 @@ def main() -> None:
             hls_proc.terminate()
         except Exception:
             pass
+    if diagnostics:
+        diagnostics.close()
 
 
 if __name__ == "__main__":
