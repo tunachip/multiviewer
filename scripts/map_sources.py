@@ -38,7 +38,9 @@ def sniff_source(
     dst_host: str,
     dst_port: int,
     packets: int = 10,
-    timeout: int = 8,
+    timeout: int = 10,
+    join_analyzeduration: int = 0,
+    join_probesize: int = 32768,
     verbose: bool = False,
 ) -> Tuple[str, int] | Tuple[None, None]:
     """
@@ -64,9 +66,9 @@ def sniff_source(
             "-v",
             "error",
             "-probesize",
-            "32768",
+            str(join_probesize),
             "-analyzeduration",
-            "0",
+            str(join_analyzeduration),
             "-timeout",
             str(timeout * 1_000_000),
             "-i",
@@ -160,7 +162,9 @@ def main() -> None:
     parser.add_argument("--iface", required=True, help="Interface to listen on (e.g., eth0).")
     parser.add_argument("--out", default="registry_with_sources.csv", help="Output CSV path.")
     parser.add_argument("--packets", type=int, default=10, help="Packets to capture per entry (default: 10).")
-    parser.add_argument("--timeout", type=int, default=8, help="Seconds before giving up per entry (default: 8).")
+    parser.add_argument("--timeout", type=int, default=10, help="Seconds before giving up per entry (default: 10).")
+    parser.add_argument("--join-analyzeduration", type=int, default=1_000_000, help="ffprobe analyzeduration (microseconds) for the multicast join (default: 1_000_000 = 1s). Use 0 for legacy behavior.")
+    parser.add_argument("--join-probesize", type=int, default=65536, help="ffprobe probesize for the multicast join (default: 65536).")
     parser.add_argument("--verbose", action="store_true", help="Print detailed progress and command output.")
     args = parser.parse_args()
 
@@ -196,6 +200,8 @@ def main() -> None:
                 port,
                 packets=args.packets,
                 timeout=args.timeout,
+                join_analyzeduration=args.join_analyzeduration,
+                join_probesize=args.join_probesize,
                 verbose=args.verbose,
             )
             if src_ip:
