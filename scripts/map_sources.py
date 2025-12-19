@@ -37,6 +37,20 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
     """
     Run a short tcpdump capture for the destination host/port and return the first source IP/port seen.
     """
+    # Kick off a short ffprobe to issue an IGMP join so packets flow.
+    try:
+        subprocess.run(
+            ["ffprobe", "-v", "error", "-timeout", str(timeout * 1_000_000), "-i", f"udp://@{dst_host}:{dst_port}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        pass
+    except subprocess.TimeoutExpired:
+        pass
+
     flt = f"udp and dst host {dst_host} and dst port {dst_port}"
     try:
         proc = subprocess.run(
