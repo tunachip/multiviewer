@@ -51,7 +51,8 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
     except subprocess.TimeoutExpired:
         return None, None
     output = (proc.stdout or b"").decode(errors="ignore").splitlines()
-    ip_re = re.compile(r"IP\s+([\d\.]+)\.(\d+)\s+>\s+([\d\.]+)\.(\d+)")
+    # Match IPv4 src:port > dst:port even when src IP has trailing numbers without dot separation
+    ip_re = re.compile(r"IP.*?\s([\d\.]+)\.(\d+)\s+>\s+([\d\.]+)\.(\d+)")
 
     def pick_line(lines):
         for ln in lines:
@@ -66,6 +67,10 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
         m = ip_re.search(line)
         if m:
             src_ip, src_port, _, _ = m.groups()
+            # Sometimes tcpdump prints truncated octets; if src_ip has more than 4 octets, trim last segment.
+            parts = src_ip.split(".")
+            if len(parts) > 4:
+                src_ip = ".".join(parts[:4])
             return src_ip, int(src_port)
     return None, None
 
