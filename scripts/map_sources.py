@@ -73,6 +73,7 @@ def main() -> None:
     if not reg_path.exists():
         raise SystemExit(f"Registry not found: {reg_path}")
 
+    entries = reg_path.read_text().splitlines()
     with reg_path.open("r", newline="") as f_in, Path(args.out).open("w", newline="") as f_out:
         reader = csv.DictReader(f_in)
         fieldnames = reader.fieldnames or []
@@ -81,18 +82,27 @@ def main() -> None:
         extra_cols = [c for c in ("sourceIp", "sourcePort") if c not in fieldnames]
         writer = csv.DictWriter(f_out, fieldnames=fieldnames + extra_cols)
         writer.writeheader()
+        total = sum(1 for _ in reader)
+        f_in.seek(0)
+        reader = csv.DictReader(f_in)
+        idx = 0
         for row in reader:
+            idx += 1
             dst = row.get("ipAddress", "").strip()
             if not dst:
                 writer.writerow(row)
+                print(f"[{idx}/{total}] {row.get('channelName','(unknown)')}: no ipAddress, skipped")
                 continue
             host, port = parse_host_port(dst)
+            print(f"[{idx}/{total}] {row.get('channelName','(unknown)')} -> {host}:{port} ...", end="", flush=True)
             src_ip, src_port = sniff_source(args.iface, host, port, packets=args.packets, timeout=args.timeout)
             if src_ip:
                 row["sourceIp"] = src_ip
             if src_port:
                 row["sourcePort"] = src_port
             writer.writerow(row)
+            status = f" source {src_ip}:{src_port}" if src_ip else " no packets"
+            print(status)
 
 
 if __name__ == "__main__":
