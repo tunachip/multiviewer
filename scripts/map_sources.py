@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Tuple
 
@@ -33,14 +33,24 @@ def parse_host_port(addr: str) -> Tuple[str, int]:
     return raw, 6000
 
 
-def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, timeout: int = 5) -> Tuple[str, int] | Tuple[None, None]:
+def sniff_source(
+    iface: str,
+    dst_host: str,
+    dst_port: int,
+    packets: int = 10,
+    timeout: int = 8,
+    verbose: bool = False,
+) -> Tuple[str, int] | Tuple[None, None]:
     """
     Run a short tcpdump capture for the destination host/port and return the first source IP/port seen.
     """
     flt = f"udp and dst host {dst_host} and dst port {dst_port}"
     try:
+        tcpdump_cmd = ["tcpdump", "-i", iface, "-nn", "-c", str(packets), "-w", "-", flt]
+        if verbose:
+            print(f"  tcpdump: {' '.join(tcpdump_cmd)}")
         tcpdump_proc = subprocess.Popen(
-            ["tcpdump", "-i", iface, "-nn", "-c", str(packets), "-w", "-", flt],
+            tcpdump_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -49,8 +59,23 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
     # Kick off a short ffprobe to issue an IGMP join so packets flow while tcpdump listens.
     join_proc = None
     try:
+        join_cmd = [
+            "ffprobe",
+            "-v",
+            "error",
+            "-probesize",
+            "32768",
+            "-analyzeduration",
+            "0",
+            "-timeout",
+            str(timeout * 1_000_000),
+            "-i",
+            f"udp://@{dst_host}:{dst_port}",
+        ]
+        if verbose:
+            print(f"  ffprobe join: {' '.join(join_cmd)}")
         join_proc = subprocess.Popen(
-            ["ffprobe", "-v", "error", "-timeout", str(timeout * 1_000_000), "-i", f"udp://@{dst_host}:{dst_port}"],
+            join_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -69,6 +94,8 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
             pass
     pkt_bytes = stdout or b""
     stderr_bytes = stderr or b""
+    if verbose:
+        print(f"  tcpdump bytes={len(pkt_bytes)}, stderr bytes={len(stderr_bytes)}")
     # Try parsing pcap bytes directly for robustness.
     if pkt_bytes:
         try:
@@ -132,8 +159,9 @@ def main() -> None:
     parser.add_argument("--registry", required=True, help="Path to the registry CSV (expects ipAddress column).")
     parser.add_argument("--iface", required=True, help="Interface to listen on (e.g., eth0).")
     parser.add_argument("--out", default="registry_with_sources.csv", help="Output CSV path.")
-    parser.add_argument("--packets", type=int, default=5, help="Packets to capture per entry (default: 5).")
-    parser.add_argument("--timeout", type=int, default=5, help="Seconds before giving up per entry (default: 5).")
+    parser.add_argument("--packets", type=int, default=10, help="Packets to capture per entry (default: 10).")
+    parser.add_argument("--timeout", type=int, default=8, help="Seconds before giving up per entry (default: 8).")
+    parser.add_argument("--verbose", action="store_true", help="Print detailed progress and command output.")
     args = parser.parse_args()
 
     reg_path = Path(args.registry)
@@ -162,7 +190,14 @@ def main() -> None:
                 continue
             host, port = parse_host_port(dst)
             print(f"[{idx}/{total}] {row.get('channelName','(unknown)')} -> {host}:{port} ...", end="", flush=True)
-            src_ip, src_port = sniff_source(args.iface, host, port, packets=args.packets, timeout=args.timeout)
+            src_ip, src_port = sniff_source(
+                args.iface,
+                host,
+                port,
+                packets=args.packets,
+                timeout=args.timeout,
+                verbose=args.verbose,
+            )
             if src_ip:
                 row["sourceIp"] = src_ip
             if src_port:
