@@ -52,20 +52,21 @@ def sniff_source(iface: str, dst_host: str, dst_port: int, packets: int = 5, tim
         return None, None
     output = (proc.stdout or b"").decode(errors="ignore").splitlines()
     ip_re = re.compile(r"IP\s+([\d\.]+)\.(\d+)\s+>\s+([\d\.]+)\.(\d+)")
-    last_match: Tuple[str, int] | None = None
-    for line in output:
+
+    def pick_line(lines):
+        for ln in lines:
+            if "IP " in ln and " > " in ln:
+                return ln
+        return None
+
+    line = pick_line(output)
+    if not line and len(output) >= 4:
+        line = output[-4]
+    if line:
         m = ip_re.search(line)
         if m:
             src_ip, src_port, _, _ = m.groups()
-            last_match = (src_ip, int(src_port))
-            break  # first packet line
-    if not last_match and len(output) >= 4:
-        m = ip_re.search(output[-4])
-        if m:
-            src_ip, src_port, _, _ = m.groups()
-            last_match = (src_ip, int(src_port))
-    if last_match:
-        return last_match
+            return src_ip, int(src_port)
     return None, None
 
 
