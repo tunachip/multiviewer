@@ -168,7 +168,7 @@ def ensure_fanouts_for_dataframe(
 
     # Group by source ip/port
     for key, group in df.group_by("ipAddress", maintain_order=True):
-        src_raw = key["ipAddress"][0]
+        src_raw = key[0] if isinstance(key, tuple) else key["ipAddress"][0]
         host, port = _parse_host_port(str(src_raw))
         # Only handle multicast + rows with programId set
         if not _is_multicast(host) or group["programId"].is_null().all():
