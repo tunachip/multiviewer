@@ -194,14 +194,15 @@
 			</div>
 			<div class="row">
 				<div>
-          <label>Encoder</label>
-          <input id="encoder" value="libx264">
+					<label>Encoder</label>
+					<input id="encoder" value="libx264">
 				</div>
 				<div>
 					<label>HLS Segment (s)</label>
 					<input id="hlsSegment" value="1.0">
 				</div>
 			</div>
+			<label><input type="checkbox" id="robustMode"> Robust input mode (larger buffers)</label>
 			<label>HLS List Size</label>
 			<input id="hlsListSize" value="6">
 			<label><input type="checkbox" id="gpuDecode"> Use GPU decode (NVDEC)</label>
@@ -269,12 +270,13 @@
 			const hlsSegment = document.getElementById('hlsSegment').value.trim() || '1.0';
 			const hlsListSize = document.getElementById('hlsListSize').value.trim() || '6';
 			const gpuDecode = document.getElementById('gpuDecode').checked;
+			const robustMode = document.getElementById('robustMode').checked;
 			const preset = document.getElementById('preset').value;
 			const sel = document.getElementById('channels');
 			const channels = Array.from(sel.selectedOptions).map(o => o.value);
 			const hls = document.getElementById('hls').checked;
 			const sessionLayout = document.getElementById('sessionLayout').value;
-			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize, sessionLayout, preset, gpuDecode};
+			const payload = {ip, port, channels, hls, duration, fps, bitrateKbps: bitrate, encoder, hlsSegment, hlsListSize, sessionLayout, preset, gpuDecode, robustMode};
 			const res = await fetch('/api/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
 			const data = await res.json();
 			const status = document.getElementById('status');
