@@ -524,6 +524,8 @@ def parse_args() -> argparse.Namespace:
                         help="Path to cache fan-out metadata (programId/local port/video metadata).")
     parser.add_argument( "--fanout-base-port", type=int, default=7000,
                         help="Starting local UDP port for fan-out outputs (default: 7000).")
+    parser.add_argument( "--robust-mode", action="store_true",
+                        help="Apply higher ffmpeg input buffers/jitter tolerance for lossy RTP (sets ffmpeg-opt defaults).")
     return parser.parse_args()
 
 
@@ -548,6 +550,14 @@ def main() -> None:
     else:
         df = assign_grid(df, args.width, args.height, padding=args.padding)
     ffmpeg_opts = parse_ffmpeg_options(args.ffmpeg_opts)
+    if args.robust_mode and not args.ffmpeg_opts:
+        ffmpeg_opts = {
+            "buffer_size": "2097152",
+            "fflags": "+genpts",
+            "probesize": "500000",
+            "analyzeduration": "2000000",
+            "reorder_queue_size": "2048",
+        }
 
     # Build backdrop and shared slots.
     backdrop = create_placeholder_grid_image(
