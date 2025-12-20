@@ -51,6 +51,7 @@ def load_registry(csv_path: str | Path) -> pl.DataFrame:
     if "fps" not in df.columns:
         df = df.with_columns(pl.lit(None).cast(pl.Float64).alias("fps"))
 
+    exclude_cols = REQUIRED_COLUMNS | {"rotation", "trim", "programId", "videoWidth", "videoHeight", "fps"}
     return df.select(
         [
             pl.col("channelName").cast(pl.Utf8),
@@ -62,6 +63,6 @@ def load_registry(csv_path: str | Path) -> pl.DataFrame:
             pl.col("videoWidth"),
             pl.col("videoHeight"),
             pl.col("fps"),
-            pl.all().exclude(list(REQUIRED_COLUMNS | {"rotation", "trim"})),
+            pl.all().exclude(list(exclude_cols)),
         ]
     )
