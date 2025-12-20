@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 def parse_host_port(addr: str) -> Tuple[str, int]:
@@ -140,6 +141,49 @@ def sniff_source(
     return None, None
 
 
+def probe_first_program_id(dst_host: str, dst_port: int, timeout: int = 5, verbose: bool = False) -> Optional[int]:
+    """
+    Use ffprobe to fetch the first program_id from a TS on udp://@host:port.
+    """
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_programs",
+        "-analyzeduration",
+        "0",
+        "-probesize",
+        "65536",
+        "-timeout",
+        str(timeout * 1_000_000),
+        "-i",
+        f"udp://@{dst_host}:{dst_port}",
+    ]
+    if verbose:
+        print(f"  ffprobe program: {' '.join(cmd)}")
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    except FileNotFoundError:
+        if verbose:
+            print("  ffprobe not found for program probe")
+        return None
+    except subprocess.TimeoutExpired:
+        return None
+    if res.returncode != 0 or not res.stdout:
+        return None
+    try:
+        data = json.loads(res.stdout)
+        progs = data.get("programs") or []
+        if not progs:
+            return None
+        pid = progs[0].get("program_id")
+        return int(pid) if pid is not None else None
+    except Exception:
+        return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Map registry destinations to observed source IP/port via tcpdump.")
     parser.add_argument("--registry", required=True, help="Path to the registry CSV (expects ipAddress column).")
@@ -150,6 +194,7 @@ def main() -> None:
     parser.add_argument("--join-analyzeduration", type=int, default=1_000_000, help="ffprobe analyzeduration (microseconds) for the multicast join (default: 1_000_000 = 1s). Use 0 for legacy behavior.")
     parser.add_argument("--join-probesize", type=int, default=65536, help="ffprobe probesize for the multicast join (default: 65536).")
     parser.add_argument("--verbose", action="store_true", help="Print detailed progress and command output.")
+    parser.add_argument("--probe-program", action="store_true", help="Probe first program_id via ffprobe and write to programId column.")
     args = parser.parse_args()
 
     reg_path = Path(args.registry)
@@ -162,7 +207,7 @@ def main() -> None:
         fieldnames = reader.fieldnames or []
         if "ipAddress" not in fieldnames:
             raise SystemExit("Registry is missing ipAddress column")
-        extra_cols = [c for c in ("sourceIp", "sourcePort") if c not in fieldnames]
+        extra_cols = [c for c in ("sourceIp", "sourcePort", "programId") if c not in fieldnames]
         writer = csv.DictWriter(f_out, fieldnames=fieldnames + extra_cols)
         writer.writeheader()
         total = sum(1 for _ in reader)
@@ -188,12 +233,19 @@ def main() -> None:
                 join_probesize=args.join_probesize,
                 verbose=args.verbose,
             )
+            program_id = None
+            if args.probe_program:
+                program_id = probe_first_program_id(host, port, timeout=args.timeout, verbose=args.verbose)
             if src_ip:
                 row["sourceIp"] = src_ip
             if src_port:
                 row["sourcePort"] = src_port
+            if program_id is not None:
+                row["programId"] = program_id
             writer.writerow(row)
             status = f" source {src_ip}:{src_port}" if src_ip else " no packets"
+            if args.probe_program:
+                status += f", programId {program_id}" if program_id is not None else ", programId n/a"
             print(status)
 
 
