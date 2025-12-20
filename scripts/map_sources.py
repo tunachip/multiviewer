@@ -110,18 +110,33 @@ def sniff_source(
         for ln in preview:
             print(f"  tcpdump line: {ln}")
 
-    ip_re = re.compile(r"IP[^>]*?(\d+\.\d+\.\d+\.\d+)\.(\d+)\s*>\s*(\d+\.\d+\.\d+\.\d+)\.(\d+)")
+    ip_re = re.compile(
+        r"\b(?:(?:2(?:[0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9])\.){3}(?:(?:2(?:[0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9]))\b\.(\d+)\s*>\s*"
+    )
     for ln in output_lines:
         m = ip_re.search(ln)
         if m:
-            src_ip, src_port, _, _ = m.groups()
-            return src_ip, int(src_port)
-    # fallback to near-summary lines
+            # extract src ip/port before '>'
+            try:
+                lhs = ln.split(">", 1)[0].strip()
+                src_token = lhs.split()[-1]
+                if "." in src_token:
+                    ip_part, port_part = src_token.rsplit(".", 1)
+                    return ip_part, int(port_part)
+            except Exception:
+                continue
     if len(output_lines) >= 4:
-        m = ip_re.search(output_lines[-4])
+        ln = output_lines[-4]
+        m = ip_re.search(ln)
         if m:
-            src_ip, src_port, _, _ = m.groups()
-            return src_ip, int(src_port)
+            try:
+                lhs = ln.split(">", 1)[0].strip()
+                src_token = lhs.split()[-1]
+                if "." in src_token:
+                    ip_part, port_part = src_token.rsplit(".", 1)
+                    return ip_part, int(port_part)
+            except Exception:
+                pass
     return None, None
 
 
